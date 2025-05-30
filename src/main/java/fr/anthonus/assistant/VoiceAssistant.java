@@ -3,16 +3,11 @@ package fr.anthonus.assistant;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
-import com.openai.models.ResponsesModel;
 import com.openai.models.audio.AudioModel;
 import com.openai.models.audio.transcriptions.Transcription;
 import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
-import com.openai.models.files.FileCreateParams;
-import com.openai.models.files.FilePurpose;
-import com.openai.models.responses.Response;
-import com.openai.models.responses.ResponseCreateParams;
 import fr.anthonus.Main;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
@@ -28,18 +23,22 @@ import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.ArrayList;
 
-import static java.lang.System.out;
-
 public class VoiceAssistant extends JFrame {
     private JLabel imageLabel;
 
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
-    private final File description = new File("data/assistantCustomisation/description.txt");
+    private String textPersonality;
+    private String voicePersonality;
 
     private int imageWidth;
     private int imageHeight;
 
     public VoiceAssistant() {
+        File textPersonalityFile = new File("data/assistantCustomisation/textPersonality.txt");
+        File voicePersonalityFile = new File("data/assistantCustomisation/voicePersonality.txt");
+        textPersonality = writeFileToString(textPersonalityFile);
+        voicePersonality = writeFileToString(voicePersonalityFile);
+
         init();
     }
 
@@ -157,14 +156,18 @@ public class VoiceAssistant extends JFrame {
             LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
             ChatCompletionCreateParams chatParams = ChatCompletionCreateParams.builder()
                     .model(ChatModel.GPT_4_1_NANO)
-                    .maxCompletionTokens(200)
+                    .maxCompletionTokens(100)
                     .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. N'utilisez AUCUN caractère spécial à part des ponctuations de base comme .,?!'.")
+                    .addSystemMessage("Voice la personnalité à respecter :\n" + textPersonality)
                     .addUserMessage(transcriptionText)
                     .build();
 
             ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
             String responseText = chatCompletion.choices().get(0).message().content().get();
             LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
+
+        //enlever les caractères spéciaux
+        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", "");
 
         try {
             LOGs.sendLog("Génération de la réponse audio...", DefaultLogType.DEFAULT);
@@ -220,9 +223,10 @@ public class VoiceAssistant extends JFrame {
                     "model": "%s",
                     "input": "%s",
                     "voice": "%s",
-                    "response_format": "%s"
+                    "response_format": "%s",
+                    "instructions": "%s"
                 }
-                """, "gpt-4o-mini-tts", message, "alloy", "wav");
+                """, "gpt-4o-mini-tts", message, "ash", "wav", voicePersonality);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.openai.com/v1/audio/speech"))
@@ -248,6 +252,20 @@ public class VoiceAssistant extends JFrame {
             throw new IOException("Erreur API: " + response.statusCode());
         }
 
+    }
+
+    private String writeFileToString(File fileName){
+        try(BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            return sb.toString().trim();
+        } catch (IOException e) {
+            LOGs.sendLog("Erreur lors de la lecture du fichier de description : " + e.getMessage(), DefaultLogType.ERROR);
+            return "";
+        }
     }
 
     private File writeAudioToTempFile(byte[] audioData) throws Exception {
