@@ -1,0 +1,23 @@
+plugins {
+    id 'java'
+}
+
+group = 'fr.anthonus'
+version = '0.0.1'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("com.openai:openai-java:2.3.0")
+    implementation("ai.picovoice:porcupine-java:3.0.4")
+    implementation("io.github.cdimascio:dotenv-java:3.2.0")
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+test {
+    useJUnitPlatform()
+}
