@@ -7,12 +7,20 @@ version = '0.0.1'
 
 repositories {
     mavenCentral()
+
+    maven {
+        name = "TarsosDSP repository"
+        url = "https://mvn.0110.be/releases"
+    }
 }
 
 dependencies {
     implementation("com.openai:openai-java:2.3.0")
     implementation("ai.picovoice:porcupine-java:3.0.4")
     implementation("io.github.cdimascio:dotenv-java:3.2.0")
+
+    implementation 'be.tarsos.dsp:core:2.5'
+    implementation 'be.tarsos.dsp:jvm:2.5'
 
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'

@@ -2,21 +2,21 @@ package fr.anthonus;
 
 import ai.picovoice.porcupine.Porcupine;
 import ai.picovoice.porcupine.PorcupineException;
+import be.tarsos.dsp.AudioDispatcher;
+import be.tarsos.dsp.AudioEvent;
+import be.tarsos.dsp.AudioProcessor;
+import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import fr.anthonus.assistant.VoiceAssistant;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
 import io.github.cdimascio.dotenv.Dotenv;
 
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.TargetDataLine;
+import javax.sound.sampled.*;
 import java.awt.*;
 import java.io.File;
 
 public class Main {
     public static Porcupine porcupine;
-    public static TargetDataLine microphone;
     private static String picovoiceAccessKey;
 
     public static String openAIKey;
@@ -43,7 +43,6 @@ public class Main {
         }
 
         try {
-
             LOGs.sendLog("Chargement de l'écoute du mot clé", DefaultLogType.LOADING);
             // Init Porcupine avec le modèle
             porcupine = new Porcupine.Builder()
@@ -52,56 +51,59 @@ public class Main {
                     .setModelPath(modelFile.getAbsolutePath())
                     .build();
 
-
-            int frameLength = porcupine.getFrameLength();
-            int sampleRate = porcupine.getSampleRate();
-
-            // Format audio attendu par Porcupine
-            AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false); // set du format audio
-            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format); // Utilisé pour demander à Java une ligne audio d’entrée compatible avec le format
-            microphone = (TargetDataLine) AudioSystem.getLine(info); //accès au micro avec le format audio
-            microphone.open(format); // ouverture du micro
-            microphone.start(); // démarrage de l'écoute
-
-            byte[] buffer = new byte[frameLength * 2]; // 2 octets par sample
-            short[] pcm = new short[frameLength]; // (jsp ça veut dire quoi pcm mais oklm) utile car Porcupine attend un tableau de short
-
-            LOGs.sendLog("Démarrage de l'écoute du micro...", DefaultLogType.LOADING);
-            // écoute du micro en boucle
-            while (true) {
-                int bytesRead = microphone.read(buffer, 0, buffer.length); // lecture des données audio du micro
-                boolean detected = voiceDetection(bytesRead, buffer, pcm, porcupine, frameLength);
-
-                if (detected && !assistantInUse) { // si le mot-clé est détecté et que l'assistant est pas déjà utilisé
-                    LOGs.sendLog("Mot-clé détecté !", DefaultLogType.DEFAULT);
-
-                    VoiceAssistant assistant = new VoiceAssistant();
-                    assistantInUse = true;
-                } else if (detected && assistantInUse) {
-                    LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé ignoré.", DefaultLogType.DEFAULT);
-                }
-            }
+            launchDispatcher();
 
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private static boolean voiceDetection(int bytesRead, byte[] buffer, short[] pcm, Porcupine porcupine, int frameLength) throws PorcupineException {
-        if (bytesRead == buffer.length) {
-            for (int i = 0; i < frameLength; i++) {
-                int LSB = buffer[2 * i] & 0xFF; // "& 0xFF" pour convertir le byte de poids faible en int non signé
-                int MSB = buffer[2 * i + 1]; // le byte de poids fort est déjà signé, donc pas besoin de "& 0xFF"
-                pcm[i] = (short) ((MSB << 8) | LSB); // conversion des 2 octets en short
-            }
+    public static void launchDispatcher(){
+        int frameLength = porcupine.getFrameLength();
+        int sampleRate = porcupine.getSampleRate();
 
-            int keywordIndex = porcupine.process(pcm); // on process les données PCM pour détecter le mot-clé
-            if (keywordIndex >= 0) { // si la voix actuelle correspond au mot-clé
-                return true; // on retourne true pour indiquer que le mot-clé a été détecté
-            }
+        AudioDispatcher dispatcher;
+        try {
+            dispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+        } catch (LineUnavailableException e) {
+            throw new RuntimeException(e);
         }
 
-        return false; // sinon on retourne false
+        dispatcher.addAudioProcessor(new AudioProcessor() {
+            @Override
+            public boolean process(AudioEvent audioEvent) {
+                float[] floatBuffer = audioEvent.getFloatBuffer();
+                short[] pcm = new short[floatBuffer.length];
+                for (int i = 0; i < floatBuffer.length; i++) {
+                    pcm[i] = (short) (floatBuffer[i] * Short.MAX_VALUE);
+                }
+                try {
+                    int keyWordIndex = Main.porcupine.process(pcm);
+                    if (keyWordIndex >= 0 && !Main.assistantInUse){
+
+                        LOGs.sendLog("Mot-clé détecté !", DefaultLogType.DEFAULT);
+
+                        dispatcher.stop();
+                        Main.assistantInUse = true;
+                        new VoiceAssistant();
+
+                    } else if (keyWordIndex >= 0) {
+                        LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé détecté mais ignoré.", DefaultLogType.DEFAULT);
+                    }
+
+                } catch (PorcupineException e) {
+                    throw new RuntimeException(e);
+                }
+
+                return true;
+            }
+
+            @Override
+            public void processingFinished() {}
+        });
+
+        LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
+        new Thread(dispatcher, "Audio Dispatcher").start();
     }
 
     private static void addTrayItems(PopupMenu popup) {

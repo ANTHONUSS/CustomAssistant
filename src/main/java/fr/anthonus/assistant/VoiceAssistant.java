@@ -1,5 +1,9 @@
 package fr.anthonus.assistant;
 
+import be.tarsos.dsp.AudioDispatcher;
+import be.tarsos.dsp.AudioEvent;
+import be.tarsos.dsp.AudioProcessor;
+import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
@@ -73,59 +77,65 @@ public class VoiceAssistant extends JFrame {
     }
 
     private void listenToPrompt() {
-        int frameLength = Main.porcupine.getFrameLength();
         int sampleRate = Main.porcupine.getSampleRate();
+        int frameLength = Main.porcupine.getFrameLength();
 
-        int silenceThreshold = 500; // seuil de silence en ms
+        int silenceThreshold = 1000; // seuil de silence en ms
         int maxSilenceDurationFrames = 2 * (sampleRate / frameLength); // durée maximale de silence en ms
-        int silenceFrames = 0;
-
-        byte[] buffer = new byte[frameLength * 2];
-        short[] pcm = new short[frameLength];
 
         List<byte[]> audioChunks = new ArrayList<>(); // liste pour stocker les chunks audio
+        int[] silenceFrames = {0};
 
-        while (true) { // on écoute la prompte jusqu'au silence
-            int bytesRead = Main.microphone.read(buffer, 0, buffer.length);
-            if (bytesRead == buffer.length) {
-                audioChunks.add(buffer.clone()); // on ajoute le chunk audio à la liste
+        AudioDispatcher dispatcher;
+        try {
+            dispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+        } catch (LineUnavailableException e) {
+            throw new RuntimeException(e);
+        }
 
-                for (int i = 0; i < frameLength; i++) {
-                    int LSB = buffer[2 * i] & 0xFF;
-                    int MSB = buffer[2 * i + 1];
-                    pcm[i] = (short) ((MSB << 8) | LSB);
-                }
-
+        AudioDispatcher finalDispatcher = dispatcher;
+        dispatcher.addAudioProcessor(new AudioProcessor() {
+            @Override
+            public boolean process(AudioEvent audioEvent) {
+                float[] floatBuffer = audioEvent.getFloatBuffer();
+                byte[] buffer = new byte[floatBuffer.length * 2];
                 boolean isSilence = true;
-                for (short sample : pcm) {
-                    if (Math.abs(sample) > silenceThreshold) { // seuil de détection de la voix
+
+                for (int i= 0; i < floatBuffer.length; i++) {
+                    short sample = (short) (floatBuffer[i] * Short.MAX_VALUE);
+                    buffer[i * 2] = (byte) (sample & 0xFF);
+                    buffer[i * 2 + 1] = (byte) ((sample >> 8) & 0xFF);
+                    if (Math.abs(sample) > silenceThreshold) { // Adjust threshold as needed
                         isSilence = false;
-                        break;
                     }
                 }
+                audioChunks.add(buffer);
 
-                if (isSilence) {
-                    silenceFrames++;
-                    if (silenceFrames >= maxSilenceDurationFrames) {
-                        // Si le silence dure trop longtemps, on arrête l'écoute
-                        LOGs.sendLog("Silence détecté, arrêt de l'écoute.", DefaultLogType.DEFAULT);
-
-                        ByteArrayOutputStream out = new ByteArrayOutputStream();
-                        for (byte[] chunk : audioChunks) {
-                            out.write(chunk, 0, chunk.length); // on écrit les chunks dans le ByteArrayOutputStream
-                        }
-                        byte[] audioData = out.toByteArray(); // on récupère les données audio
-
-                        processPrompt(audioData);
-
-                        break;
+                if(isSilence) {
+                    silenceFrames[0]++;
+                    if (silenceFrames[0] >= maxSilenceDurationFrames) {
+                        finalDispatcher.stop();
+                        SwingUtilities.invokeLater(() -> {
+                            ByteArrayOutputStream out = new ByteArrayOutputStream();
+                            try {
+                                for (byte[] chunk : audioChunks) out.write(chunk);
+                                processPrompt(out.toByteArray());
+                            }catch (IOException e) {
+                                LOGs.sendLog("Erreur lors de la lecture des chunks audio : " + e.getMessage(), DefaultLogType.ERROR);
+                            }
+                        });
                     }
                 } else {
-                    silenceFrames = 0; // reset du compteur de silence
+                    silenceFrames[0] = 0; // reset du compteur de silence
                 }
+                return true;
             }
 
-        }
+            @Override
+            public void processingFinished() {}
+        });
+
+        new Thread(dispatcher, "Prompt Dispacher").start();
 
     }
 
@@ -158,7 +168,7 @@ public class VoiceAssistant extends JFrame {
                     .model(ChatModel.GPT_4_1_NANO)
                     .maxCompletionTokens(100)
                     .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. N'utilisez AUCUN caractère spécial à part des ponctuations de base comme .,?!'.")
-                    .addSystemMessage("Voice la personnalité à respecter :\n" + textPersonality)
+                    .addSystemMessage(textPersonality)
                     .addUserMessage(transcriptionText)
                     .build();
 
@@ -167,7 +177,7 @@ public class VoiceAssistant extends JFrame {
             LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
         //enlever les caractères spéciaux
-        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", "");
+        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ");
 
         try {
             LOGs.sendLog("Génération de la réponse audio...", DefaultLogType.DEFAULT);
@@ -195,12 +205,6 @@ public class VoiceAssistant extends JFrame {
                     } catch (IOException e) {
                         LOGs.sendLog("Erreur lors de la fermeture du flux audio : " + e.getMessage(), DefaultLogType.ERROR);
                     }
-
-                    // Lancer l'animation de sortie après la fin de la lecture
-                    slide(25, -imageWidth, () -> {
-                        Main.assistantInUse = false;
-                        dispose();
-                    });
                 }
             });
 
@@ -208,10 +212,10 @@ public class VoiceAssistant extends JFrame {
 
         } catch (Exception e) {
             LOGs.sendLog("Erreur lors de la génération ou de la lecture de la réponse audio : " + e.getMessage(), DefaultLogType.ERROR);
-
-            // En cas d'erreur, on ferme quand même l'assistant
+        } finally {
             slide(25, -imageWidth, () -> {
                 Main.assistantInUse = false;
+                Main.launchDispatcher();
                 dispose();
             });
         }
@@ -226,7 +230,7 @@ public class VoiceAssistant extends JFrame {
                     "response_format": "%s",
                     "instructions": "%s"
                 }
-                """, "gpt-4o-mini-tts", message, "ash", "wav", voicePersonality);
+                """, "gpt-4o-mini-tts", message, "alloy", "wav", voicePersonality);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.openai.com/v1/audio/speech"))
