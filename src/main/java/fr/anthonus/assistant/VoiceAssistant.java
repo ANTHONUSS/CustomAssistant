@@ -270,14 +270,11 @@ public class VoiceAssistant extends JFrame {
                 double rms = Math.sqrt(sum / buffer.length);
                 double norm = Math.min(1.0, rms * 10); // Normalisation pour éviter les valeurs trop grandes
 
-                int newHeight = (int) (imageHeight * (1*0.2*norm));
+                int newOffset = (int)(1*0.2*norm);
 
                 SwingUtilities.invokeLater(() -> {
-                    int newPos = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70 - newHeight;
+                    int newPos = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70 - newOffset;
                     setLocation(30, newPos);
-                    setSize(imageWidth, imageHeight+newHeight);
-                    image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight+newHeight, Image.SCALE_DEFAULT));
-                    imageLabel.setIcon(image);
                     validate();
                 });
                 return true;
@@ -286,9 +283,7 @@ public class VoiceAssistant extends JFrame {
             @Override
             public void processingFinished() {
                 SwingUtilities.invokeLater(() -> {
-                    setSize(imageWidth, imageHeight);
-                    image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight, Image.SCALE_DEFAULT));
-                    imageLabel.setIcon(image);
+                    setLocation(30, 70);
                     validate();
                 });
             }
