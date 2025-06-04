@@ -14,10 +14,13 @@ import io.github.cdimascio.dotenv.Dotenv;
 import javax.sound.sampled.*;
 import java.awt.*;
 import java.io.File;
+import java.util.Scanner;
 
 public class Main {
     public static Porcupine porcupine;
     private static String picovoiceAccessKey;
+
+    private static AudioDispatcher dispatcher;
 
     public static String openAIKey;
 
@@ -53,6 +56,16 @@ public class Main {
 
             launchDispatcher();
 
+            Scanner sc = new Scanner(System.in);
+            while(true) {
+                if(sc.nextLine().equalsIgnoreCase("ok")){
+                    LOGs.sendLog("Mot-clé détecté !", DefaultLogType.DEFAULT);
+                    dispatcher.stop();
+                    Main.assistantInUse = true;
+                    new VoiceAssistant();
+                }
+            }
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -62,7 +75,6 @@ public class Main {
         int frameLength = porcupine.getFrameLength();
         int sampleRate = porcupine.getSampleRate();
 
-        AudioDispatcher dispatcher;
         try {
             dispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
         } catch (LineUnavailableException e) {

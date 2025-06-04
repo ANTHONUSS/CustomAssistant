@@ -70,11 +70,13 @@ public class VoiceAssistant extends JFrame {
 
         setFocusableWindowState(false);
 
-        //décalage sur le coté puis écoute du prompt
+        //décalage sur le côté puis écoute du prompt
+        int startX = -imageWidth;
         int startY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
         int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+        setLocation(startX, startY);
         setVisible(true);
-        slide(70, 70, startY, endY , null);
+        slide(30, 30, startY, endY , null);
         listenToPrompt();
     }
 
@@ -222,6 +224,7 @@ public class VoiceAssistant extends JFrame {
                 Main.launchDispatcher();
                 dispose();
             });
+
         }
     }
 
