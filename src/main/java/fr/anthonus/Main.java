@@ -59,10 +59,11 @@ public class Main {
             Scanner sc = new Scanner(System.in);
             while(true) {
                 if(sc.nextLine().equalsIgnoreCase("ok")){
-                    LOGs.sendLog("Mot-clé détecté !", DefaultLogType.DEFAULT);
+                    LOGs.sendLog("Mode texte entré, écoute du prompt...", DefaultLogType.DEFAULT);
+                    String prompt = sc.nextLine();
                     dispatcher.stop();
                     Main.assistantInUse = true;
-                    new VoiceAssistant();
+                    new VoiceAssistant(prompt);
                 }
             }
 
@@ -92,12 +93,12 @@ public class Main {
                 try {
                     int keyWordIndex = Main.porcupine.process(pcm);
                     if (keyWordIndex >= 0 && !Main.assistantInUse){
-
-                        LOGs.sendLog("Mot-clé détecté !", DefaultLogType.DEFAULT);
-
                         dispatcher.stop();
                         Main.assistantInUse = true;
-                        new VoiceAssistant();
+
+                        LOGs.sendLog("Mot-clé détecté ! Lancement en mode vocal...", DefaultLogType.DEFAULT);
+
+                        new VoiceAssistant(null); // Lancement de l'assistant vocal
 
                     } else if (keyWordIndex >= 0) {
                         LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé détecté mais ignoré.", DefaultLogType.DEFAULT);

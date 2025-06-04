@@ -3,7 +3,9 @@ package fr.anthonus.assistant;
 import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
+import be.tarsos.dsp.io.TarsosDSPAudioInputStream;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
+import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
@@ -33,15 +35,18 @@ public class VoiceAssistant extends JFrame {
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
     private String textPersonality;
     private String voicePersonality;
+    private String prompt;
 
     private int imageWidth;
     private int imageHeight;
 
-    public VoiceAssistant() {
+    public VoiceAssistant(String prompt) {
         File textPersonalityFile = new File("data/assistantCustomisation/textPersonality.txt");
         File voicePersonalityFile = new File("data/assistantCustomisation/voicePersonality.txt");
         textPersonality = writeFileToString(textPersonalityFile);
         voicePersonality = writeFileToString(voicePersonalityFile);
+
+        if (prompt != null) this.prompt = prompt;
 
         init();
     }
@@ -76,8 +81,12 @@ public class VoiceAssistant extends JFrame {
         int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
         setLocation(startX, startY);
         setVisible(true);
-        slide(30, 30, startY, endY , null);
-        listenToPrompt();
+        slide(30, 30, startY, endY, null);
+        if (prompt == null) {
+            listenToPrompt();
+        } else {
+            processPrompt(null, prompt);
+        }
     }
 
     private void listenToPrompt() {
@@ -105,7 +114,7 @@ public class VoiceAssistant extends JFrame {
                 byte[] buffer = new byte[floatBuffer.length * 2];
                 boolean isSilence = true;
 
-                for (int i= 0; i < floatBuffer.length; i++) {
+                for (int i = 0; i < floatBuffer.length; i++) {
                     short sample = (short) (floatBuffer[i] * Short.MAX_VALUE);
                     buffer[i * 2] = (byte) (sample & 0xFF);
                     buffer[i * 2 + 1] = (byte) ((sample >> 8) & 0xFF);
@@ -115,7 +124,7 @@ public class VoiceAssistant extends JFrame {
                 }
                 audioChunks.add(buffer);
 
-                if(isSilence) {
+                if (isSilence) {
                     silenceFrames[0]++;
                     if (silenceFrames[0] >= maxSilenceDurationFrames) {
                         finalDispatcher.stop();
@@ -123,8 +132,8 @@ public class VoiceAssistant extends JFrame {
                             ByteArrayOutputStream out = new ByteArrayOutputStream();
                             try {
                                 for (byte[] chunk : audioChunks) out.write(chunk);
-                                processPrompt(out.toByteArray());
-                            }catch (IOException e) {
+                                processPrompt(out.toByteArray(), null);
+                            } catch (IOException e) {
                                 LOGs.sendLog("Erreur lors de la lecture des chunks audio : " + e.getMessage(), DefaultLogType.ERROR);
                             }
                         });
@@ -136,99 +145,159 @@ public class VoiceAssistant extends JFrame {
             }
 
             @Override
-            public void processingFinished() {}
+            public void processingFinished() {
+            }
         });
 
         new Thread(dispatcher, "Prompt Dispacher").start();
 
     }
 
-    private void processPrompt(byte[] audioData) {
+    private void processPrompt(byte[] audioData, String prompt) {
+        //builder le client OpenAI
         OpenAIClient client = OpenAIOkHttpClient.builder()
                 .apiKey(Main.openAIKey)
                 .build();
+        String transcriptionText = null;
 
+        if (audioData != null && prompt == null) {
+            // transcritpion de l'audio en texte
+            transcriptionText = audioToText(client, audioData);
+        }
+
+        //envoi de la requête chatGPT
+        String responseText = getOpenaiResponse(client, (audioData != null && prompt == null? transcriptionText : prompt));
+
+        //génération et lecture de la réponse audio avec animation
+        try {
+            byte[] audioResponse = getOpenaiSpeechBytes(responseText); // get de la réponse en audio
+            AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
+            ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
+            AudioInputStream ais = new AudioInputStream(bais, format, audioResponse.length / format.getFrameSize());
+
+            animateWindow(ais); // animation de la fenêtre
+            playAudio(ais); // lecture de l'audio
+
+        } catch (IOException | LineUnavailableException | InterruptedException e) {
+            throw new RuntimeException(e);
+
+        } finally {
+            int startY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+            int endY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
+            slide(30, 30, startY, endY, () -> {
+                Main.assistantInUse = false;
+                Main.launchDispatcher();
+                dispose();
+            });
+        }
+    }
+
+    private String audioToText(OpenAIClient client, byte[] audioData) {
         File audioFile;
         try {
             LOGs.sendLog("Traitement de la prompt...", DefaultLogType.DEFAULT);
             audioFile = writeAudioToTempFile(audioData);
         } catch (Exception e) {
             LOGs.sendLog("Erreur lors de l'écriture du fichier audio temporaire : " + e.getMessage(), DefaultLogType.ERROR);
-            return;
+            return null;
         }
 
-            LOGs.sendLog("Envoi de la requête de transcription...", DefaultLogType.DEFAULT);
-            TranscriptionCreateParams transcriptionParams = TranscriptionCreateParams.builder()
-                    .file(audioFile.toPath())
-                    .model(AudioModel.WHISPER_1)
-                    .build();
+        LOGs.sendLog("Envoi de la requête de transcription...", DefaultLogType.DEFAULT);
+        TranscriptionCreateParams transcriptionParams = TranscriptionCreateParams.builder()
+                .file(audioFile.toPath())
+                .model(AudioModel.WHISPER_1)
+                .build();
 
-            Transcription transcription = client.audio().transcriptions().create(transcriptionParams).asTranscription();
-            String transcriptionText = transcription.text();
-            LOGs.sendLog("Transcription : " + transcriptionText, DefaultLogType.DEFAULT);
+        Transcription transcription = client.audio().transcriptions().create(transcriptionParams).asTranscription();
+        String transcriptionText = transcription.text();
+        LOGs.sendLog("Transcription : " + transcriptionText, DefaultLogType.DEFAULT);
 
-            LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
-            ChatCompletionCreateParams chatParams = ChatCompletionCreateParams.builder()
-                    .model(ChatModel.GPT_4_1_NANO)
-                    .maxCompletionTokens(100)
-                    .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. N'utilisez AUCUN caractère spécial à part des ponctuations de base comme .,?!'.")
-                    .addSystemMessage(textPersonality)
-                    .addUserMessage(transcriptionText)
-                    .build();
+        return transcriptionText;
+    }
 
-            ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
-            String responseText = chatCompletion.choices().get(0).message().content().get();
-            LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
+    private String getOpenaiResponse(OpenAIClient client, String prompt) {
+        LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
+        ChatCompletionCreateParams chatParams = ChatCompletionCreateParams.builder()
+                .model(ChatModel.GPT_4_1_NANO)
+                .maxCompletionTokens(100)
+                .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. N'utilisez AUCUN caractère spécial à part des ponctuations de base comme .,?!'.")
+                .addSystemMessage(textPersonality)
+                .addUserMessage(prompt)
+                .build();
+
+        ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
+        String responseText = chatCompletion.choices().get(0).message().content().get();
+        LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
         //enlever les caractères spéciaux
         responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ");
 
-        try {
-            LOGs.sendLog("Génération de la réponse audio...", DefaultLogType.DEFAULT);
-            byte[] audioResponse = getOpenaiSpeechBytes(responseText);
-
-            if (audioResponse == null || audioResponse.length == 0) {
-                LOGs.sendLog("La réponse audio est vide", DefaultLogType.ERROR);
-                return;
-            }
-
-            LOGs.sendLog("Lecture de l'audio...", DefaultLogType.DEFAULT);
-            AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
-            ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
-            AudioInputStream ais = new AudioInputStream(bais, format, audioResponse.length / format.getFrameSize());
-
-            Clip clip = AudioSystem.getClip();
-            clip.open(ais);
-
-            clip.addLineListener(event -> {
-                if (event.getType() == LineEvent.Type.STOP) {
-                    // Fermer les ressources audio
-                    clip.close();
-                    try {
-                        ais.close();
-                    } catch (IOException e) {
-                        LOGs.sendLog("Erreur lors de la fermeture du flux audio : " + e.getMessage(), DefaultLogType.ERROR);
-                    }
-                }
-            });
-
-            clip.start();
-
-        } catch (Exception e) {
-            LOGs.sendLog("Erreur lors de la génération ou de la lecture de la réponse audio : " + e.getMessage(), DefaultLogType.ERROR);
-        } finally {
-            int startY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
-            int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
-            slide(70, 70, startY, endY, () -> {
-                Main.assistantInUse = false;
-                Main.launchDispatcher();
-                dispose();
-            });
-
-        }
+        return responseText;
     }
 
-    private byte[] getOpenaiSpeechBytes(String message) throws IOException {
+    private void playAudio(AudioInputStream ais) throws LineUnavailableException, IOException {
+        // lecture de la réponse audio
+        LOGs.sendLog("Lecture de l'audio...", DefaultLogType.DEFAULT);
+
+        Clip clip = AudioSystem.getClip();
+        clip.open(ais);
+
+        clip.addLineListener(event -> {
+            if (event.getType() == LineEvent.Type.STOP) {
+                // Fermer les ressources audio
+                clip.close();
+                try {
+                    ais.close();
+                } catch (IOException e) {
+                    LOGs.sendLog("Erreur lors de la fermeture du flux audio : " + e.getMessage(), DefaultLogType.ERROR);
+                }
+            }
+        });
+
+        clip.start();
+    }
+
+    private void animateWindow(AudioInputStream ais) {
+        TarsosDSPAudioInputStream tarsosais = new JVMAudioInputStream(ais);
+        AudioDispatcher dispatcher = new AudioDispatcher(tarsosais, 1024, 0);
+
+        dispatcher.addAudioProcessor(new AudioProcessor() {
+            @Override
+            public boolean process(AudioEvent audioEvent) {
+                float[] buffer = audioEvent.getFloatBuffer();
+                double sum = 0.0;
+                for (float sample : buffer) sum += sample*sample;
+                double rms = Math.sqrt(sum / buffer.length);
+                double norm = Math.min(1.0, rms * 10); // Normalisation pour éviter les valeurs trop grandes
+
+                int newHeight = (int) (imageHeight * (1*0.2*norm));
+
+                SwingUtilities.invokeLater(() -> {
+                    int newPos = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70 - newHeight;
+                    setLocation(30, newPos);
+                    setSize(imageWidth, imageHeight+newHeight);
+                    image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight+newHeight, Image.SCALE_DEFAULT));
+                    imageLabel.setIcon(image);
+                    validate();
+                });
+                return true;
+            }
+
+            @Override
+            public void processingFinished() {
+                SwingUtilities.invokeLater(() -> {
+                    setSize(imageWidth, imageHeight);
+                    image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight, Image.SCALE_DEFAULT));
+                    imageLabel.setIcon(image);
+                    validate();
+                });
+            }
+        });
+
+        new Thread(dispatcher, "Animation Thread").start();
+    }
+
+    private byte[] getOpenaiSpeechBytes(String message) throws IOException, InterruptedException {
         String json = String.format("""
                 {
                     "model": "%s",
@@ -249,11 +318,7 @@ public class VoiceAssistant extends JFrame {
         HttpClient client = HttpClient.newHttpClient();
 
         HttpResponse<byte[]> response;
-        try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        } catch (InterruptedException | IOException e) {
-            throw new RuntimeException(e);
-        }
+        response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
         if (response.statusCode() == 200) {
             LOGs.sendLog("Réponse audio reçue (taille: " + response.body().length + " bytes)", DefaultLogType.DEFAULT);
@@ -265,8 +330,8 @@ public class VoiceAssistant extends JFrame {
 
     }
 
-    private String writeFileToString(File fileName){
-        try(BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
+    private String writeFileToString(File fileName) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
