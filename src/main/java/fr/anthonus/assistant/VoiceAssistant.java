@@ -47,6 +47,7 @@ public class VoiceAssistant extends JFrame {
     }
 
     private void init() {
+        setVisible(false);
         setUndecorated(true);
         setAlwaysOnTop(true);
         setType(Window.Type.UTILITY);
@@ -61,7 +62,6 @@ public class VoiceAssistant extends JFrame {
         imageHeight = Math.round(imageWidth * ratio);
 
         setSize(imageWidth, imageHeight);
-        setLocation(Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70, -imageWidth);
 
         image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight, Image.SCALE_DEFAULT));
 
@@ -69,10 +69,12 @@ public class VoiceAssistant extends JFrame {
         add(imageLabel);
 
         setFocusableWindowState(false);
-        setVisible(true);
 
         //décalage sur le coté puis écoute du prompt
-        slide(-imageWidth, 25, null);
+        int startY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
+        int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+        setVisible(true);
+        slide(70, 70, startY, endY , null);
         listenToPrompt();
     }
 
@@ -213,7 +215,9 @@ public class VoiceAssistant extends JFrame {
         } catch (Exception e) {
             LOGs.sendLog("Erreur lors de la génération ou de la lecture de la réponse audio : " + e.getMessage(), DefaultLogType.ERROR);
         } finally {
-            slide(25, -imageWidth, () -> {
+            int startY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
+            int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+            slide(70, 70, startY, endY, () -> {
                 Main.assistantInUse = false;
                 Main.launchDispatcher();
                 dispose();
@@ -295,8 +299,7 @@ public class VoiceAssistant extends JFrame {
         return tempFile;
     }
 
-    private void slide(int startX, int endX, Runnable onFinish) {
-        int y = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+    private void slide(int startX, int endX, int startY, int endY, Runnable onFinish) {
         int duration = 600; // durée totale en ms
         int fps = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode().getRefreshRate(); // get les fps de l'écran
         if (fps <= 0) fps = 10; // Si le taux de rafraîchissement n'est pas défini, on utilise une valeur par défaut
@@ -310,11 +313,12 @@ public class VoiceAssistant extends JFrame {
             // Ease-out cubic
             float ease = 1 - (float) Math.pow(1 - t, 3);
             int x = (int) (startX + (endX - startX) * ease);
+            int y = (int) (startY + (endY - startY) * ease);
             setLocation(x, y);
 
             if (t >= 1f) {
                 timer.stop();
-                setLocation(endX, y);
+                setLocation(endX, endY);
                 if (onFinish != null) onFinish.run();
             }
         });
