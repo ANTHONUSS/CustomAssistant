@@ -3,9 +3,7 @@ package fr.anthonus.assistant;
 import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
-import be.tarsos.dsp.io.TarsosDSPAudioInputStream;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
-import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
@@ -30,15 +28,23 @@ import java.util.List;
 import java.util.ArrayList;
 
 public class VoiceAssistant extends JFrame {
-    private JLabel imageLabel;
 
+    private String prompt;
+
+    // pour la personnalité de l'assistant
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
     private String textPersonality;
     private String voicePersonality;
-    private String prompt;
 
+    // pour l'image
+    private JLabel imageLabel;
     private int imageWidth;
     private int imageHeight;
+
+    // pour l'animation de la fenêtre
+    private int currentY = -1;
+    private int targetY = -1;
+    private Timer animationTimer;
 
     public VoiceAssistant(String prompt) {
         File textPersonalityFile = new File("data/assistantCustomisation/textPersonality.txt");
@@ -175,8 +181,7 @@ public class VoiceAssistant extends JFrame {
             ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
             AudioInputStream ais = new AudioInputStream(bais, format, audioResponse.length / format.getFrameSize());
 
-            animateWindow(ais); // animation de la fenêtre
-            playAudio(ais); // lecture de l'audio
+            playAudioWithAnimation(ais);
 
         } catch (IOException | LineUnavailableException | InterruptedException e) {
             throw new RuntimeException(e);
@@ -235,61 +240,60 @@ public class VoiceAssistant extends JFrame {
         return responseText;
     }
 
-    private void playAudio(AudioInputStream ais) throws LineUnavailableException, IOException {
-        // lecture de la réponse audio
-        LOGs.sendLog("Lecture de l'audio...", DefaultLogType.DEFAULT);
+    private void playAudioWithAnimation(AudioInputStream ais) throws IOException, LineUnavailableException {
+        LOGs.sendLog("Lecture de l'audio avec animation...", DefaultLogType.DEFAULT);
 
-        Clip clip = AudioSystem.getClip();
-        clip.open(ais);
+        AudioFormat format = ais.getFormat();
+        DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
 
-        clip.addLineListener(event -> {
-            if (event.getType() == LineEvent.Type.STOP) {
-                // Fermer les ressources audio
-                clip.close();
-                try {
-                    ais.close();
-                } catch (IOException e) {
-                    LOGs.sendLog("Erreur lors de la fermeture du flux audio : " + e.getMessage(), DefaultLogType.ERROR);
-                }
+        int baseY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+
+        try(SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info)) {
+            line.open(format);
+            line.start();
+
+            int bufferSize = 1024;
+            byte[] buffer = new byte[bufferSize];
+            int bytesRead;
+
+            if (currentY == -1) currentY = baseY;
+            if (animationTimer == null) {
+                animationTimer = new Timer(15, e -> {
+                    if (targetY != -1 && currentY != targetY) {
+                        int dy = targetY - currentY;
+                        // Animation easing
+                        currentY += Math.signum(dy) * Math.max(1, Math.abs(dy) / 4);
+                        setLocation(30, currentY);
+                        validate();
+                    }
+                });
+                animationTimer.start();
             }
-        });
 
-        clip.start();
-    }
 
-    private void animateWindow(AudioInputStream ais) {
-        TarsosDSPAudioInputStream tarsosais = new JVMAudioInputStream(ais);
-        AudioDispatcher dispatcher = new AudioDispatcher(tarsosais, 1024, 0);
+            while ((bytesRead = ais.read(buffer, 0, buffer.length)) != -1) {
+                line.write(buffer, 0, bytesRead);
 
-        dispatcher.addAudioProcessor(new AudioProcessor() {
-            @Override
-            public boolean process(AudioEvent audioEvent) {
-                float[] buffer = audioEvent.getFloatBuffer();
                 double sum = 0.0;
-                for (float sample : buffer) sum += sample*sample;
-                double rms = Math.sqrt(sum / buffer.length);
-                double norm = Math.min(1.0, rms * 10); // Normalisation pour éviter les valeurs trop grandes
+                int sampleCount = bytesRead / 2;
+                for (int i = 0; i < bytesRead; i += 2) {
+                    int sample = ((buffer[i+1] << 8) | (buffer[i] & 0xFF));
+                    sum += sample * sample;
+                }
+                double rms = sampleCount > 0 ? Math.sqrt(sum / sampleCount) : 0;
+                double norm = Math.min(1.0, rms / 2000.0);
 
-                int newOffset = (int)(1*0.2*norm);
+                int newOffset = (int)(imageHeight*0.2*norm);
+                int newTargetY = baseY - newOffset;
 
-                SwingUtilities.invokeLater(() -> {
-                    int newPos = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70 - newOffset;
-                    setLocation(30, newPos);
-                    validate();
-                });
-                return true;
+                targetY = newTargetY;
+
             }
+            line.drain();
+            line.stop();
+        }
+        ais.close();
 
-            @Override
-            public void processingFinished() {
-                SwingUtilities.invokeLater(() -> {
-                    setLocation(30, 70);
-                    validate();
-                });
-            }
-        });
-
-        new Thread(dispatcher, "Animation Thread").start();
     }
 
     private byte[] getOpenaiSpeechBytes(String message) throws IOException, InterruptedException {

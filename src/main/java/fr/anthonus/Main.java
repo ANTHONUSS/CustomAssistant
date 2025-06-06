@@ -20,13 +20,14 @@ public class Main {
     public static Porcupine porcupine;
     private static String picovoiceAccessKey;
 
-    private static AudioDispatcher dispatcher;
+    private static AudioDispatcher wakeWordDispatcher;
 
     public static String openAIKey;
 
     public static boolean assistantInUse = false;
 
     public static void main(String[] args) throws AWTException {
+        // Créé le tray icon et l'initialise
         PopupMenu popup = new PopupMenu();
         addTrayItems(popup);
 
@@ -37,6 +38,7 @@ public class Main {
         SystemTray tray = SystemTray.getSystemTray();
         tray.add(trayIcon);
 
+        // Charge les variables d'environnement
         loadEnv();
 
         File keywordFile = new File("data/wakeWordsModels/ok-assistant_fr_windows_v3_0_0.ppn");
@@ -45,6 +47,7 @@ public class Main {
             throw new RuntimeException("Fichiers de modèle introuvables. Assurez-vous que les fichiers sont présents dans le répertoire 'data/wakeWordsModels'.");
         }
 
+        // écoute du prompt
         try {
             LOGs.sendLog("Chargement de l'écoute du mot clé", DefaultLogType.LOADING);
             // Init Porcupine avec le modèle
@@ -54,14 +57,16 @@ public class Main {
                     .setModelPath(modelFile.getAbsolutePath())
                     .build();
 
+            // Lance l'écoute du mot clé
             launchDispatcher();
 
+            // Lance aussi l'écoute du prompt en texte
             Scanner sc = new Scanner(System.in);
             while(true) {
                 if(sc.nextLine().equalsIgnoreCase("ok")){
                     LOGs.sendLog("Mode texte entré, écoute du prompt...", DefaultLogType.DEFAULT);
                     String prompt = sc.nextLine();
-                    dispatcher.stop();
+                    wakeWordDispatcher.stop();
                     Main.assistantInUse = true;
                     new VoiceAssistant(prompt);
                 }
@@ -76,31 +81,38 @@ public class Main {
         int frameLength = porcupine.getFrameLength();
         int sampleRate = porcupine.getSampleRate();
 
+        // Initialisation du dispatcher pour écouter le mot clé
         try {
-            dispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+            wakeWordDispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
         } catch (LineUnavailableException e) {
             throw new RuntimeException(e);
         }
 
-        dispatcher.addAudioProcessor(new AudioProcessor() {
+        // Setup et lancement du dispatcher en boucle
+        wakeWordDispatcher.addAudioProcessor(new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
+                // Convertit le buffer audio en short pour Porcupine
                 float[] floatBuffer = audioEvent.getFloatBuffer();
                 short[] pcm = new short[floatBuffer.length];
                 for (int i = 0; i < floatBuffer.length; i++) {
                     pcm[i] = (short) (floatBuffer[i] * Short.MAX_VALUE);
                 }
+
                 try {
+                    // Traite le buffer PCM avec Porcupine
                     int keyWordIndex = Main.porcupine.process(pcm);
+
+                    // Si le mot clé est détecté, on lance l'assistant vocal
                     if (keyWordIndex >= 0 && !Main.assistantInUse){
-                        dispatcher.stop();
+                        wakeWordDispatcher.stop();
                         Main.assistantInUse = true;
 
                         LOGs.sendLog("Mot-clé détecté ! Lancement en mode vocal...", DefaultLogType.DEFAULT);
 
                         new VoiceAssistant(null); // Lancement de l'assistant vocal
 
-                    } else if (keyWordIndex >= 0) {
+                    } else if (keyWordIndex >= 0) { // Si l'assistant est déjà en cours d'utilisation
                         LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé détecté mais ignoré.", DefaultLogType.DEFAULT);
                     }
 
@@ -116,7 +128,8 @@ public class Main {
         });
 
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
-        new Thread(dispatcher, "Audio Dispatcher").start();
+        // Démarre le dispatcher dans un thread séparé
+        new Thread(wakeWordDispatcher, "Audio Dispatcher").start();
     }
 
     private static void addTrayItems(PopupMenu popup) {
