@@ -5,6 +5,7 @@ import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.SilenceDetector;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
+import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.writer.WriterProcessor;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -180,9 +181,9 @@ public class VoiceAssistant extends JFrame {
             ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
             AudioInputStream ais = new AudioInputStream(bais, format, audioResponse.length / format.getFrameSize());
 
-            playAudioWithAnimation(ais);
+            playAudioWithAnimation(audioResponse, format);
 
-        } catch (IOException | LineUnavailableException | InterruptedException e) {
+        } catch (IOException | LineUnavailableException | InterruptedException | UnsupportedAudioFileException e) {
             throw new RuntimeException(e);
 
         } finally {
@@ -239,60 +240,49 @@ public class VoiceAssistant extends JFrame {
         return responseText;
     }
 
-    private void playAudioWithAnimation(AudioInputStream ais) throws IOException, LineUnavailableException {
+    private void playAudioWithAnimation(byte[] byteArray, AudioFormat format) throws IOException, LineUnavailableException, UnsupportedAudioFileException {
         LOGs.sendLog("Lecture de l'audio avec animation...", DefaultLogType.DEFAULT);
-
-        AudioFormat format = ais.getFormat();
-        DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
 
         int baseY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
 
-        try(SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info)) {
-            line.open(format);
-            line.start();
-
-            int bufferSize = 1024;
-            byte[] buffer = new byte[bufferSize];
-            int bytesRead;
-
-            if (currentY == -1) currentY = baseY;
-            if (animationTimer == null) {
-                animationTimer = new Timer(15, e -> {
-                    if (targetY != -1 && currentY != targetY) {
-                        int dy = targetY - currentY;
-                        // Animation easing
-                        currentY += Math.signum(dy) * Math.max(1, Math.abs(dy) / 4);
-                        setLocation(30, currentY);
-                        validate();
-                    }
-                });
-                animationTimer.start();
-            }
-
-
-            while ((bytesRead = ais.read(buffer, 0, buffer.length)) != -1) {
-                line.write(buffer, 0, bytesRead);
-
-                double sum = 0.0;
-                int sampleCount = bytesRead / 2;
-                for (int i = 0; i < bytesRead; i += 2) {
-                    int sample = ((buffer[i+1] << 8) | (buffer[i] & 0xFF));
-                    sum += sample * sample;
+        //Initialisation de l'animation
+        if (currentY == -1) currentY = baseY;
+        if (animationTimer == null) {
+            animationTimer = new Timer(15, e -> {
+                if (targetY != -1 && currentY != targetY) {
+                    int dy = targetY - currentY;
+                    currentY += Math.signum(dy) * Math.max(1, Math.abs(dy) / 4);
+                    setLocation(30, currentY);
+                    validate();
                 }
-                double rms = sampleCount > 0 ? Math.sqrt(sum / sampleCount) : 0;
-                double norm = Math.min(1.0, rms / 2000.0);
+            });
+            animationTimer.start();
+        }
+
+        AudioDispatcher playerDispatcher = AudioDispatcherFactory.fromByteArray(byteArray, format, 1024, 0);
+        AudioPlayer audioPlayer = new AudioPlayer(format);
+
+        playerDispatcher.addAudioProcessor(new AudioProcessor() {
+            @Override
+            public boolean process(AudioEvent audioEvent) {
+                double rms = AudioEvent.calculateRMS(audioEvent.getFloatBuffer())*3;
+                double norm = Math.min(1.0, rms);
 
                 int newOffset = (int)(imageHeight*0.2*norm);
-                int newTargetY = baseY - newOffset;
 
-                targetY = newTargetY;
+                targetY = baseY - newOffset;
 
+                return true;
             }
-            line.drain();
-            line.stop();
-        }
-        ais.close();
 
+            @Override
+            public void processingFinished() {}
+        });
+
+
+        playerDispatcher.addAudioProcessor(audioPlayer);
+
+        playerDispatcher.run();
     }
 
     private byte[] getOpenaiSpeechBytes(String message) throws IOException, InterruptedException {
