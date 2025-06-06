@@ -3,7 +3,9 @@ package fr.anthonus.assistant;
 import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
+import be.tarsos.dsp.SilenceDetector;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
+import be.tarsos.dsp.writer.WriterProcessor;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
@@ -91,6 +93,7 @@ public class VoiceAssistant extends JFrame {
         if (prompt == null) {
             listenToPrompt();
         } else {
+            // Si l'assistant est en mode texte, on traite directement le prompt (pas d'écoute puisque pas de micro)
             processPrompt(null, prompt);
         }
     }
@@ -99,45 +102,41 @@ public class VoiceAssistant extends JFrame {
         int sampleRate = Main.porcupine.getSampleRate();
         int frameLength = Main.porcupine.getFrameLength();
 
-        int silenceThreshold = 1000; // seuil de silence en ms
-        int maxSilenceDurationFrames = 2 * (sampleRate / frameLength); // durée maximale de silence en ms
+        int maxSilenceDurationFrames = (sampleRate / frameLength);
 
-        List<byte[]> audioChunks = new ArrayList<>(); // liste pour stocker les chunks audio
         int[] silenceFrames = {0};
 
-        AudioDispatcher dispatcher;
+        List<byte[]> audioChunks = new ArrayList<>();
+
+        AudioDispatcher promptDispatcher;
         try {
-            dispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+            promptDispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
         } catch (LineUnavailableException e) {
             throw new RuntimeException(e);
         }
 
-        AudioDispatcher finalDispatcher = dispatcher;
-        dispatcher.addAudioProcessor(new AudioProcessor() {
+        SilenceDetector silenceDetector = new SilenceDetector(-70, false);
+        promptDispatcher.addAudioProcessor(silenceDetector);
+
+        AudioDispatcher finalPromptDispatcher = promptDispatcher;
+        promptDispatcher.addAudioProcessor(new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
-                float[] floatBuffer = audioEvent.getFloatBuffer();
-                byte[] buffer = new byte[floatBuffer.length * 2];
-                boolean isSilence = true;
+                float[] buffer = audioEvent.getFloatBuffer();
+                byte[] bytesBuffer = audioEvent.getByteBuffer();
+                audioChunks.add(bytesBuffer);
 
-                for (int i = 0; i < floatBuffer.length; i++) {
-                    short sample = (short) (floatBuffer[i] * Short.MAX_VALUE);
-                    buffer[i * 2] = (byte) (sample & 0xFF);
-                    buffer[i * 2 + 1] = (byte) ((sample >> 8) & 0xFF);
-                    if (Math.abs(sample) > silenceThreshold) { // Adjust threshold as needed
-                        isSilence = false;
-                    }
-                }
-                audioChunks.add(buffer);
-
-                if (isSilence) {
+                if (silenceDetector.isSilence(buffer)){
                     silenceFrames[0]++;
+
                     if (silenceFrames[0] >= maxSilenceDurationFrames) {
-                        finalDispatcher.stop();
+                        finalPromptDispatcher.stop();
                         SwingUtilities.invokeLater(() -> {
                             ByteArrayOutputStream out = new ByteArrayOutputStream();
                             try {
-                                for (byte[] chunk : audioChunks) out.write(chunk);
+                                for (byte[] chunk : audioChunks) {
+                                    out.write(chunk);
+                                }
                                 processPrompt(out.toByteArray(), null);
                             } catch (IOException e) {
                                 LOGs.sendLog("Erreur lors de la lecture des chunks audio : " + e.getMessage(), DefaultLogType.ERROR);
@@ -145,17 +144,17 @@ public class VoiceAssistant extends JFrame {
                         });
                     }
                 } else {
-                    silenceFrames[0] = 0; // reset du compteur de silence
+                    silenceFrames[0] = 0;
                 }
                 return true;
+
             }
 
             @Override
-            public void processingFinished() {
-            }
+            public void processingFinished() {}
         });
 
-        new Thread(dispatcher, "Prompt Dispacher").start();
+        new Thread(promptDispatcher, "Prompt Dispacher").start();
 
     }
 

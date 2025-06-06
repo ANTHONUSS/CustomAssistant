@@ -15,6 +15,7 @@ public enum DefaultLogType implements LogType {
     DEFAULT("DEFAULT", LOGs.createAnsiCode(Color.WHITE, false, false, false)),
     ERROR("ERROR", LOGs.createAnsiCode(Color.RED, false, false, false)),
     WARNING("WARNING", LOGs.createAnsiCode(Color.YELLOW, false, false, false)),
+    DEBUG("DEBUG", LOGs.createAnsiCode(Color.PINK, false, false, true)),
     LOADING("LOADING", LOGs.createAnsiCode(53, 74, 255, false, false, false)),
     FILE_LOADING("FILE_LOADING", LOGs.createAnsiCode(0, 0, 0, 130, 0, 255, false, false, false)),;
 
