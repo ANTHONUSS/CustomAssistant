@@ -4,6 +4,8 @@ import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.SilenceDetector;
+import be.tarsos.dsp.filters.HighPass;
+import be.tarsos.dsp.io.TarsosDSPAudioFormat;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.writer.WriterProcessor;
@@ -27,6 +29,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -104,9 +107,7 @@ public class VoiceAssistant extends JFrame {
         int frameLength = Main.porcupine.getFrameLength();
 
         int maxSilenceDurationFrames = (sampleRate / frameLength);
-
         int[] silenceFrames = {0};
-
         List<byte[]> audioChunks = new ArrayList<>();
 
         AudioDispatcher promptDispatcher;
@@ -115,12 +116,15 @@ public class VoiceAssistant extends JFrame {
         } catch (LineUnavailableException e) {
             throw new RuntimeException(e);
         }
+        AudioDispatcher finalPromptDispatcher = promptDispatcher;
 
-        SilenceDetector silenceDetector = new SilenceDetector(-70, false);
+//        HighPass highPassFilter = new HighPass(100, sampleRate);
+//        promptDispatcher.addAudioProcessor(highPassFilter);
+
+        SilenceDetector silenceDetector = new SilenceDetector(-50, false);
         promptDispatcher.addAudioProcessor(silenceDetector);
 
-        AudioDispatcher finalPromptDispatcher = promptDispatcher;
-        promptDispatcher.addAudioProcessor(new AudioProcessor() {
+        AudioProcessor listenProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
                 float[] buffer = audioEvent.getFloatBuffer();
@@ -153,7 +157,8 @@ public class VoiceAssistant extends JFrame {
 
             @Override
             public void processingFinished() {}
-        });
+        };
+        promptDispatcher.addAudioProcessor(listenProcessor);
 
         new Thread(promptDispatcher, "Prompt Dispacher").start();
 
@@ -179,7 +184,6 @@ public class VoiceAssistant extends JFrame {
             byte[] audioResponse = getOpenaiSpeechBytes(responseText); // get de la réponse en audio
             AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
             ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
-            AudioInputStream ais = new AudioInputStream(bais, format, audioResponse.length / format.getFrameSize());
 
             playAudioWithAnimation(audioResponse, format);
 
@@ -262,7 +266,7 @@ public class VoiceAssistant extends JFrame {
         AudioDispatcher playerDispatcher = AudioDispatcherFactory.fromByteArray(byteArray, format, 1024, 0);
         AudioPlayer audioPlayer = new AudioPlayer(format);
 
-        playerDispatcher.addAudioProcessor(new AudioProcessor() {
+        AudioProcessor animationProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
                 double rms = AudioEvent.calculateRMS(audioEvent.getFloatBuffer())*3;
@@ -277,8 +281,8 @@ public class VoiceAssistant extends JFrame {
 
             @Override
             public void processingFinished() {}
-        });
-
+        };
+        playerDispatcher.addAudioProcessor(animationProcessor);
 
         playerDispatcher.addAudioProcessor(audioPlayer);
 

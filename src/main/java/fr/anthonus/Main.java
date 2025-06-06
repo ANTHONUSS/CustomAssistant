@@ -5,7 +5,11 @@ import ai.picovoice.porcupine.PorcupineException;
 import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
+import be.tarsos.dsp.filters.HighPass;
+import be.tarsos.dsp.io.TarsosDSPAudioFormat;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
+import be.tarsos.dsp.io.jvm.AudioPlayer;
+import be.tarsos.dsp.io.jvm.WaveformWriter;
 import fr.anthonus.assistant.VoiceAssistant;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
@@ -62,8 +66,8 @@ public class Main {
 
             // Lance aussi l'écoute du prompt en texte
             Scanner sc = new Scanner(System.in);
-            while(true) {
-                if(sc.nextLine().equalsIgnoreCase("ok")){
+            while (true) {
+                if (sc.nextLine().equalsIgnoreCase("ok")) {
                     LOGs.sendLog("Mode texte entré, écoute du prompt...", DefaultLogType.DEFAULT);
                     String prompt = sc.nextLine();
                     wakeWordDispatcher.stop();
@@ -77,7 +81,7 @@ public class Main {
         }
     }
 
-    public static void launchDispatcher(){
+    public static void launchDispatcher() {
         int frameLength = porcupine.getFrameLength();
         int sampleRate = porcupine.getSampleRate();
 
@@ -88,8 +92,10 @@ public class Main {
             throw new RuntimeException(e);
         }
 
-        // Setup et lancement du dispatcher en boucle
-        wakeWordDispatcher.addAudioProcessor(new AudioProcessor() {
+        HighPass highPassFilter = new HighPass(100, sampleRate);
+        wakeWordDispatcher.addAudioProcessor(highPassFilter);
+
+        AudioProcessor wakeWordProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
                 // Convertit le buffer audio en short pour Porcupine
@@ -104,7 +110,7 @@ public class Main {
                     int keyWordIndex = Main.porcupine.process(pcm);
 
                     // Si le mot clé est détecté, on lance l'assistant vocal
-                    if (keyWordIndex >= 0 && !Main.assistantInUse){
+                    if (keyWordIndex >= 0 && !Main.assistantInUse) {
                         wakeWordDispatcher.stop();
                         Main.assistantInUse = true;
 
@@ -124,8 +130,12 @@ public class Main {
             }
 
             @Override
-            public void processingFinished() {}
-        });
+            public void processingFinished() {
+            }
+
+        };
+        wakeWordDispatcher.addAudioProcessor(wakeWordProcessor);
+
 
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
         // Démarre le dispatcher dans un thread séparé
