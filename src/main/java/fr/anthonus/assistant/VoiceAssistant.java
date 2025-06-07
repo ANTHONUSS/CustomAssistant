@@ -4,7 +4,6 @@ import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.SilenceDetector;
-import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
@@ -16,6 +15,7 @@ import com.openai.models.audio.AudioModel;
 import com.openai.models.audio.transcriptions.Transcription;
 import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
 import com.openai.models.chat.completions.*;
+import com.openai.models.evals.EvalCreateParams;
 import fr.anthonus.Main;
 import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
 import fr.anthonus.logs.LOGs;
@@ -56,12 +56,25 @@ public class VoiceAssistant extends JFrame {
     private final double angleStep = 0.1; // ajuster la vitesse globale
 
     public VoiceAssistant(String prompt) {
-        File textPersonalityFile = new File("data/assistantCustomisation/textPersonality.txt");
-        File voicePersonalityFile = new File("data/assistantCustomisation/voicePersonality.txt");
+        File textPersonalityFile = new File("data/assistantCustomisation/personality/textPersonality.txt");
+        File voicePersonalityFile = new File("data/assistantCustomisation/personality/voicePersonality.txt");
         textPersonality = writeFileToString(textPersonalityFile);
         voicePersonality = writeFileToString(voicePersonalityFile);
 
         if (prompt != null) this.prompt = prompt;
+
+
+        // Vérifier si le dossier temp existe, sinon le créer
+        File tempDir = new File("temp");
+        if (!tempDir.exists()) {
+            tempDir.mkdirs();
+        }
+        // clear le dossier temp
+        for (File file : tempDir.listFiles()) {
+            if (file.isFile()) {
+                file.delete();
+            }
+        }
 
         init();
     }
@@ -163,6 +176,7 @@ public class VoiceAssistant extends JFrame {
                     if (silenceFrames[0] >= maxSilenceDurationFrames) {
                         promptDispatcher.stop();
                         stopListenAnimation();
+
                         ByteArrayOutputStream out = new ByteArrayOutputStream();
                         for (byte[] audioBuffer : audioBuffers) {
                             out.write(audioBuffer, 0, audioBuffer.length);
@@ -228,11 +242,15 @@ public class VoiceAssistant extends JFrame {
             byte[] audioResponse = getOpenaiSpeechBytes(responseText); // get de la réponse en audio
             AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
 
+            if (Main.enableCustomVoice) {
+                audioResponse = changeAudioRVC(audioResponse, format);
+                format = new AudioFormat(40000, 16, 1, true, false);
+            }
+
             playAudioWithAnimation(audioResponse, format);
 
-        } catch (IOException | LineUnavailableException | InterruptedException | UnsupportedAudioFileException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
-
         } finally {
             int startY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
             int endY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
@@ -244,11 +262,72 @@ public class VoiceAssistant extends JFrame {
         }
     }
 
+    private byte[] changeAudioRVC(byte[] audioData, AudioFormat format) throws Exception {
+        LOGs.sendLog("Changement de la voix avec RVC...", DefaultLogType.DEFAULT);
+        writeAudioToTempFile(audioData, "RVC/AssistantResponse", format);
+        File tempRVCDir = new File("temp/RVC");
+
+        //TODO: charger RVC avec des settings personnalisés
+        File mangioRVCPath = new File("D:/Mangio-RVC/Data"); // chemin absolu en attendant les settings
+        File pythonRuntimePath = new File(mangioRVCPath.getAbsolutePath() + "/runtime/python.exe");
+        File rvcModelFile = new File("data/assistantCustomisation/rvcModels/model.pth");
+        File rvcModelIndexFile = new File("data/assistantCustomisation/rvcModels/model.index");
+
+        //TODO: lancer la comande python
+        ProcessBuilder pb = new ProcessBuilder(
+                pythonRuntimePath.getAbsolutePath(), "infer_batch_rvc.py",
+                "6",
+                tempRVCDir.getAbsolutePath(),
+                rvcModelIndexFile.getAbsolutePath(),
+                "harvest",
+                new File("temp/RVCOutput").getAbsolutePath(),
+                rvcModelFile.getAbsolutePath(),
+                "0.66",
+                "cuda:0",
+                "True",
+                "3",
+                "0",
+                "1",
+                "0.33"
+        );
+        pb.directory(mangioRVCPath);
+        Process p = pb.start();
+
+        try (BufferedReader stdout = new BufferedReader(new InputStreamReader(p.getInputStream()));
+             BufferedReader stderr = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
+            stdout.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.DEFAULT));
+            stderr.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.ERROR));
+        }
+
+        int exitCode = p.waitFor();
+        if (exitCode != 0) {
+            LOGs.sendLog("Erreur lors de l'exécution de RVC : code de sortie " + exitCode, DefaultLogType.ERROR);
+            return audioData; // retourner l'audio original en cas d'erreur
+        }
+
+        //TODO: reconvertir le fichier sortie en byte[]
+        File outputFile = new File("temp/RVCOutput/AssistantResponse.wav");
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        try (FileInputStream fis = new FileInputStream(outputFile)) {
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                byteArrayOutputStream.write(buffer, 0, bytesRead);
+            }
+        } catch (IOException e) {
+            return audioData;
+        }
+
+        return byteArrayOutputStream.toByteArray();
+    }
+
     private String audioToText(OpenAIClient client, byte[] audioData) {
         File audioFile;
         try {
             LOGs.sendLog("Traitement de la prompt...", DefaultLogType.DEFAULT);
-            audioFile = writeAudioToTempFile(audioData);
+            AudioFormat format = new AudioFormat(Main.porcupine.getSampleRate(), 16, 1, true, false);
+            audioFile = writeAudioToTempFile(audioData, "userPrompt", format);
         } catch (Exception e) {
             LOGs.sendLog("Erreur lors de l'écriture du fichier audio temporaire : " + e.getMessage(), DefaultLogType.ERROR);
             return null;
@@ -276,11 +355,12 @@ public class VoiceAssistant extends JFrame {
                         Vous avez un historique des 10 derniers messages envoyés par l'utilisateur et vous.
                         Le message va être envoyé à un modèle TTS, donc tenez en compte que le message sera lu par la suite.
                         N'utilisez aucun caractère spécial à part des ponctuations de base comme .,?!'.
+                        Tu doit répondre en français, sauf si l'utilisateur te demande de répondre dans une autre langue.
                         """)
                 .addSystemMessage(textPersonality)
                 .messages(promptHistory);
 
-        if (Main.enableWebSearch){
+        if (Main.enableWebSearch) {
             builder.model(ChatModel.GPT_4O_MINI_SEARCH_PREVIEW)
                     .addSystemMessage("""
                             Ne citez pas vos sources.
@@ -296,7 +376,7 @@ public class VoiceAssistant extends JFrame {
         ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
         String responseText = chatCompletion.choices().get(0).message().content().get();
 
-        if (Main.enableWebSearch){
+        if (Main.enableWebSearch) {
             // si la web search est activée, on demande à l'assistant de réécrire le résultat plus lisible pour le TTS
             ChatCompletionCreateParams rewriteParams = ChatCompletionCreateParams.builder()
                     .model(ChatModel.GPT_4_1_NANO)
@@ -412,27 +492,17 @@ public class VoiceAssistant extends JFrame {
         }
     }
 
-    private File writeAudioToTempFile(byte[] audioData) throws Exception {
-        // Crée le dossier temp s'il n'existe pas
-        File tempDir = new File("temp");
-        if (!tempDir.exists()) {
-            tempDir.mkdirs();
-        }
-        // clear le dossier temp
-        for (File file : tempDir.listFiles()) {
-            if (file.isFile()) {
-                file.delete();
-            }
-        }
-        // Crée un fichier temporaire dans le dossier temp
-        File tempFile = File.createTempFile("audio_", ".wav", tempDir);
+    private File writeAudioToTempFile(byte[] audioData, String fileName, AudioFormat format) throws Exception {
+        fileName = "temp/" + fileName + ".wav";
 
-        AudioFormat format = new AudioFormat(Main.porcupine.getSampleRate(), 16, 1, true, false);
-        ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
-        AudioInputStream ais = new AudioInputStream(bais, format, audioData.length / format.getFrameSize());
-        AudioSystem.write(ais, AudioFileFormat.Type.WAVE, tempFile);
-        ais.close();
-        return tempFile;
+        AudioDispatcher writerDispatcher = AudioDispatcherFactory.fromByteArray(audioData, format, 1024, 0);
+
+        WaveformWriter waveformWriter = new WaveformWriter(format, fileName);
+        writerDispatcher.addAudioProcessor(waveformWriter);
+
+        writerDispatcher.run();
+
+        return new File(fileName);
     }
 
     private void slide(int startX, int endX, int startY, int endY, Runnable onFinish) {

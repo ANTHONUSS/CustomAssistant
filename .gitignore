@@ -45,3 +45,5 @@ bin/
 /conf/.env
 /data/wakeWordsModels/
 /temp/
+/data/assistantCustomisation/RVC/
+/data/assistantCustomisation/rvcModels/

@@ -33,6 +33,8 @@ public class Main {
 
     public static boolean enableWebSearch = false;
 
+    public static boolean enableCustomVoice = false;
+
     public static void main(String[] args) throws AWTException {
         // Créé le tray icon et l'initialise
         PopupMenu popup = new PopupMenu();
@@ -167,6 +169,20 @@ public class Main {
             }
         });
         popup.add(webSearchItem);
+
+        //Ajout de l'item pour autoriser la voix personnalisée
+        CheckboxMenuItem customVoiceItem = new CheckboxMenuItem("Voix personnalisée");
+        customVoiceItem.setState(false);
+        customVoiceItem.addItemListener(e -> {
+            if (e.getStateChange() == ItemEvent.SELECTED) {
+                LOGs.sendLog("Voix personnalisée activée", DefaultLogType.DEFAULT);
+                enableCustomVoice = true;
+            } else {
+                LOGs.sendLog("Voix personnalisée désactivée", DefaultLogType.DEFAULT);
+                enableCustomVoice = false;
+            }
+        });
+        popup.add(customVoiceItem);
 
         popup.addSeparator();
 
