@@ -4,6 +4,7 @@ import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.SilenceDetector;
+import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
@@ -35,14 +36,12 @@ public class VoiceAssistant extends JFrame {
 
     // pour la personnalité de l'assistant
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
-    private String textPersonality;
-    private String voicePersonality;
+    private final String textPersonality;
+    private final String voicePersonality;
 
     // pour l'historique des prompts
     private static final List<ChatCompletionMessageParam> promptHistory = new ArrayList<>();
 
-    // pour l'image
-    private JLabel imageLabel;
     private int imageWidth;
     private int imageHeight;
 
@@ -81,7 +80,8 @@ public class VoiceAssistant extends JFrame {
 
         image.setImage(image.getImage().getScaledInstance(imageWidth, imageHeight, Image.SCALE_DEFAULT));
 
-        imageLabel = new JLabel(image);
+        // pour l'image
+        JLabel imageLabel = new JLabel(image);
         add(imageLabel);
 
         setFocusableWindowState(false);
@@ -124,12 +124,23 @@ public class VoiceAssistant extends JFrame {
         int maxSilenceDurationFrames = (sampleRate / frameLength);
         int[] silenceFrames = {0};
         List<byte[]> audioBuffers = new ArrayList<>();
-        SilenceDetector silenceDetector = new SilenceDetector(-50, false);
+        SilenceDetector silenceDetector = new SilenceDetector(-35, false);
         promptDispatcher.addAudioProcessor(silenceDetector);
+
+        final boolean[] isStarted = {false};
 
         AudioProcessor listenProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
+                if(!isStarted[0] && silenceDetector.isSilence(audioEvent.getFloatBuffer())) {
+                    // Si le silence est détecté, on ne traite pas l'événement
+                    return true;
+                } else if (!isStarted[0]) {
+                    // Si on n'a pas encore commencé, on initialise le traitement
+                    isStarted[0] = true;
+                    LOGs.sendLog("son détécté, démarrage de l'écoute...", DefaultLogType.DEBUG);
+                }
+
                 float[] buffer = audioEvent.getFloatBuffer();
                 byte[] bytesBuffer = audioEvent.getByteBuffer().clone();
                 audioBuffers.add(bytesBuffer);
@@ -257,14 +268,11 @@ public class VoiceAssistant extends JFrame {
 
         ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
         String responseText = chatCompletion.choices().get(0).message().content().get();
-        LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
         //enlever les caractères spéciaux et remplacer les cédilles en c normaux
-        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ")
-                .replace("ç", "c")
-                .replace("Ç", "C")
-                .replace("à", "a")
-                .replace("À", "A");
+        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!'çÇàÀâÂäÄéÉèÈêÊëËîÎïÏôÔöÖùÙûÛüÜœŒ\\-+]", " ");
+
+        LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
         return responseText;
     }
@@ -289,7 +297,6 @@ public class VoiceAssistant extends JFrame {
         }
 
         AudioDispatcher playerDispatcher = AudioDispatcherFactory.fromByteArray(byteArray, format, 1024, 0);
-        AudioPlayer audioPlayer = new AudioPlayer(format);
 
         AudioProcessor animationProcessor = new AudioProcessor() {
             @Override
@@ -310,6 +317,7 @@ public class VoiceAssistant extends JFrame {
         };
         playerDispatcher.addAudioProcessor(animationProcessor);
 
+        AudioPlayer audioPlayer = new AudioPlayer(format);
         playerDispatcher.addAudioProcessor(audioPlayer);
 
         playerDispatcher.run();

@@ -68,13 +68,10 @@ public class Main {
             // Lance aussi l'écoute du prompt en texte
             Scanner sc = new Scanner(System.in);
             while (true) {
-                if (sc.nextLine().equalsIgnoreCase("ok")) {
-                    LOGs.sendLog("Mode texte entré, écoute du prompt...", DefaultLogType.DEFAULT);
-                    String prompt = sc.nextLine();
-                    wakeWordDispatcher.stop();
-                    Main.assistantInUse = true;
-                    new VoiceAssistant(prompt);
-                }
+                String prompt = sc.nextLine();
+                wakeWordDispatcher.stop();
+                Main.assistantInUse = true;
+                new VoiceAssistant(prompt);
             }
 
         } catch (Exception e) {
@@ -146,8 +143,6 @@ public class Main {
 
         };
         wakeWordDispatcher.addAudioProcessor(wakeWordProcessor);
-
-
 
 
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
