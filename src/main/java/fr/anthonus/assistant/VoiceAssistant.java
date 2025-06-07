@@ -8,6 +8,7 @@ import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.TarsosDSPAudioFormat;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
+import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
 import be.tarsos.dsp.writer.WriterProcessor;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -106,21 +107,25 @@ public class VoiceAssistant extends JFrame {
         int sampleRate = Main.porcupine.getSampleRate();
         int frameLength = Main.porcupine.getFrameLength();
 
-        int maxSilenceDurationFrames = (sampleRate / frameLength);
-        int[] silenceFrames = {0};
-        List<byte[]> audioChunks = new ArrayList<>();
-
-        AudioDispatcher promptDispatcher;
+        AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+        DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+        TargetDataLine line;
         try {
-            promptDispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+            line = (TargetDataLine) AudioSystem.getLine(info);
+            line.open(format);
+            line.start();
         } catch (LineUnavailableException e) {
             throw new RuntimeException(e);
         }
-        AudioDispatcher finalPromptDispatcher = promptDispatcher;
 
-//        HighPass highPassFilter = new HighPass(100, sampleRate);
-//        promptDispatcher.addAudioProcessor(highPassFilter);
+        AudioInputStream stream = new AudioInputStream(line);
+        JVMAudioInputStream audioStream = new JVMAudioInputStream(stream);
 
+        AudioDispatcher promptDispatcher = new AudioDispatcher(audioStream, frameLength, 0);
+
+        int maxSilenceDurationFrames = (sampleRate / frameLength);
+        int[] silenceFrames = {0};
+        List<byte[]> audioBuffers = new ArrayList<>();
         SilenceDetector silenceDetector = new SilenceDetector(-50, false);
         promptDispatcher.addAudioProcessor(silenceDetector);
 
@@ -128,35 +133,31 @@ public class VoiceAssistant extends JFrame {
             @Override
             public boolean process(AudioEvent audioEvent) {
                 float[] buffer = audioEvent.getFloatBuffer();
-                byte[] bytesBuffer = audioEvent.getByteBuffer();
-                audioChunks.add(bytesBuffer);
+                byte[] bytesBuffer = audioEvent.getByteBuffer().clone();
+                audioBuffers.add(bytesBuffer);
 
-                if (silenceDetector.isSilence(buffer)){
+                if (silenceDetector.isSilence(buffer)) {
                     silenceFrames[0]++;
 
                     if (silenceFrames[0] >= maxSilenceDurationFrames) {
-                        finalPromptDispatcher.stop();
-                        SwingUtilities.invokeLater(() -> {
-                            ByteArrayOutputStream out = new ByteArrayOutputStream();
-                            try {
-                                for (byte[] chunk : audioChunks) {
-                                    out.write(chunk);
-                                }
-                                processPrompt(out.toByteArray(), null);
-                            } catch (IOException e) {
-                                LOGs.sendLog("Erreur lors de la lecture des chunks audio : " + e.getMessage(), DefaultLogType.ERROR);
-                            }
-                        });
+                        promptDispatcher.stop();
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        for (byte[] audioBuffer : audioBuffers) {
+                            out.write(audioBuffer, 0, audioBuffer.length);
+                        }
+                        processPrompt(out.toByteArray(), null);
                     }
                 } else {
                     silenceFrames[0] = 0;
                 }
+
                 return true;
 
             }
 
             @Override
-            public void processingFinished() {}
+            public void processingFinished() {
+            }
         };
         promptDispatcher.addAudioProcessor(listenProcessor);
 
@@ -177,13 +178,12 @@ public class VoiceAssistant extends JFrame {
         }
 
         //envoi de la requête chatGPT
-        String responseText = getOpenaiResponse(client, (audioData != null && prompt == null? transcriptionText : prompt));
+        String responseText = getOpenaiResponse(client, (audioData != null && prompt == null ? transcriptionText : prompt));
 
         //génération et lecture de la réponse audio avec animation
         try {
             byte[] audioResponse = getOpenaiSpeechBytes(responseText); // get de la réponse en audio
             AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
-            ByteArrayInputStream bais = new ByteArrayInputStream(audioResponse);
 
             playAudioWithAnimation(audioResponse, format);
 
@@ -238,8 +238,12 @@ public class VoiceAssistant extends JFrame {
         String responseText = chatCompletion.choices().get(0).message().content().get();
         LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
-        //enlever les caractères spéciaux
+        //enlever les caractères spéciaux et remplacer les cédilles en c normaux
         responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ");
+        responseText = responseText.replaceAll("ç", "c");
+        responseText = responseText.replaceAll("Ç", "C");
+        responseText = responseText.replaceAll("à", "a");
+        responseText = responseText.replaceAll("À", "A");
 
         return responseText;
     }
@@ -269,10 +273,10 @@ public class VoiceAssistant extends JFrame {
         AudioProcessor animationProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
-                double rms = AudioEvent.calculateRMS(audioEvent.getFloatBuffer())*3;
+                double rms = AudioEvent.calculateRMS(audioEvent.getFloatBuffer()) * 3;
                 double norm = Math.min(1.0, rms);
 
-                int newOffset = (int)(imageHeight*0.2*norm);
+                int newOffset = (int) (imageHeight * 0.2 * norm);
 
                 targetY = baseY - newOffset;
 
@@ -280,7 +284,8 @@ public class VoiceAssistant extends JFrame {
             }
 
             @Override
-            public void processingFinished() {}
+            public void processingFinished() {
+            }
         };
         playerDispatcher.addAudioProcessor(animationProcessor);
 

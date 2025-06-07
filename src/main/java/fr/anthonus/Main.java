@@ -9,6 +9,7 @@ import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.TarsosDSPAudioFormat;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
+import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
 import be.tarsos.dsp.io.jvm.WaveformWriter;
 import fr.anthonus.assistant.VoiceAssistant;
 import fr.anthonus.logs.LOGs;
@@ -86,13 +87,23 @@ public class Main {
         int sampleRate = porcupine.getSampleRate();
 
         // Initialisation du dispatcher pour écouter le mot clé
+        AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+        DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+        TargetDataLine line;
         try {
-            wakeWordDispatcher = AudioDispatcherFactory.fromDefaultMicrophone(sampleRate, frameLength, 0);
+            line = (TargetDataLine) AudioSystem.getLine(info);
+            line.open(format);
+            line.start();
         } catch (LineUnavailableException e) {
             throw new RuntimeException(e);
         }
 
-        HighPass highPassFilter = new HighPass(100, sampleRate);
+        final AudioInputStream stream = new AudioInputStream(line);
+        JVMAudioInputStream audioStream = new JVMAudioInputStream(stream);
+
+        wakeWordDispatcher = new AudioDispatcher(audioStream, frameLength, 0);
+
+        HighPass highPassFilter = new HighPass(200, sampleRate);
         wakeWordDispatcher.addAudioProcessor(highPassFilter);
 
         AudioProcessor wakeWordProcessor = new AudioProcessor() {
@@ -135,6 +146,8 @@ public class Main {
 
         };
         wakeWordDispatcher.addAudioProcessor(wakeWordProcessor);
+
+
 
 
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
