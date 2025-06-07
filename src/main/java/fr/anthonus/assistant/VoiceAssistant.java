@@ -15,7 +15,6 @@ import com.openai.models.audio.AudioModel;
 import com.openai.models.audio.transcriptions.Transcription;
 import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
 import com.openai.models.chat.completions.*;
-import com.openai.models.evals.EvalCreateParams;
 import fr.anthonus.Main;
 import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
 import fr.anthonus.logs.LOGs;
@@ -115,7 +114,10 @@ public class VoiceAssistant extends JFrame {
                 listenToPrompt();
             } else {
                 // Si l'assistant est en mode texte, on traite directement le prompt (pas d'écoute puisque pas de micro)
-                processPrompt(null, prompt);
+                // on lance le traitement dans un thread pour bien jouer l'animation
+                new Thread(() -> {
+                    processPrompt(null, prompt);
+                }).start();
             }
         });
 
