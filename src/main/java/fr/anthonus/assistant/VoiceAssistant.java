@@ -8,6 +8,7 @@ import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
+import be.tarsos.dsp.io.jvm.WaveformWriter;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
@@ -16,6 +17,7 @@ import com.openai.models.audio.transcriptions.Transcription;
 import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
 import com.openai.models.chat.completions.*;
 import fr.anthonus.Main;
+import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
 
@@ -134,8 +136,10 @@ public class VoiceAssistant extends JFrame {
         SilenceDetector silenceDetector = new SilenceDetector(-35, false);
         promptDispatcher.addAudioProcessor(silenceDetector);
 
-        final boolean[] isStarted = {false};
+        AudioProcessor rnnoiseProcessor = new RNNoiseProcessor();
+        promptDispatcher.addAudioProcessor(rnnoiseProcessor);
 
+        final boolean[] isStarted = {false};
         AudioProcessor listenProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
@@ -149,6 +153,7 @@ public class VoiceAssistant extends JFrame {
                     return true;
                 } else if (!isStarted[0]) {
                     // Si on n'a pas encore commencé, on initialise le traitement
+                    LOGs.sendLog("Début de l'écoute du prompt...", DefaultLogType.DEFAULT);
                     isStarted[0] = true;
                 }
 

@@ -6,12 +6,10 @@ import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.filters.HighPass;
-import be.tarsos.dsp.io.TarsosDSPAudioFormat;
-import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
-import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
 import be.tarsos.dsp.io.jvm.WaveformWriter;
 import fr.anthonus.assistant.VoiceAssistant;
+import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
 import io.github.cdimascio.dotenv.Dotenv;
@@ -20,6 +18,7 @@ import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.io.File;
+import java.util.LinkedList;
 import java.util.Scanner;
 
 public class Main {
@@ -103,8 +102,8 @@ public class Main {
 
         wakeWordDispatcher = new AudioDispatcher(audioStream, frameLength, 0);
 
-        HighPass highPassFilter = new HighPass(200, sampleRate);
-        wakeWordDispatcher.addAudioProcessor(highPassFilter);
+        AudioProcessor rnnoiseProcessor = new RNNoiseProcessor();
+        wakeWordDispatcher.addAudioProcessor(rnnoiseProcessor);
 
         AudioProcessor wakeWordProcessor = new AudioProcessor() {
             @Override
@@ -146,6 +145,7 @@ public class Main {
 
         };
         wakeWordDispatcher.addAudioProcessor(wakeWordProcessor);
+
 
 
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
