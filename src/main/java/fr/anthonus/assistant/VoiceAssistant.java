@@ -49,6 +49,9 @@ public class VoiceAssistant extends JFrame {
     private int currentY = -1;
     private int targetY = -1;
     private Timer animationTimer;
+    private Timer listenAnimationTimer;
+    private double angle = 0;
+    private final double angleStep = 0.1; // ajuster la vitesse globale
 
     public VoiceAssistant(String prompt) {
         File textPersonalityFile = new File("data/assistantCustomisation/textPersonality.txt");
@@ -92,16 +95,20 @@ public class VoiceAssistant extends JFrame {
         int endY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
         setLocation(startX, startY);
         setVisible(true);
-        slide(30, 30, startY, endY, null);
-        if (prompt == null) {
-            listenToPrompt();
-        } else {
-            // Si l'assistant est en mode texte, on traite directement le prompt (pas d'écoute puisque pas de micro)
-            processPrompt(null, prompt);
-        }
+        slide(30, 30, startY, endY, () -> {
+            if (prompt == null) {
+                listenToPrompt();
+            } else {
+                // Si l'assistant est en mode texte, on traite directement le prompt (pas d'écoute puisque pas de micro)
+                processPrompt(null, prompt);
+            }
+        });
+
     }
 
     private void listenToPrompt() {
+        startListenAnimation();
+
         int sampleRate = Main.porcupine.getSampleRate();
         int frameLength = Main.porcupine.getFrameLength();
 
@@ -132,24 +139,25 @@ public class VoiceAssistant extends JFrame {
         AudioProcessor listenProcessor = new AudioProcessor() {
             @Override
             public boolean process(AudioEvent audioEvent) {
-                if(!isStarted[0] && silenceDetector.isSilence(audioEvent.getFloatBuffer())) {
+                float[] buffer = audioEvent.getFloatBuffer();
+                byte[] bytesBuffer = audioEvent.getByteBuffer().clone();
+                audioBuffers.add(bytesBuffer);
+
+                if (!isStarted[0] && silenceDetector.isSilence(buffer)) {
                     // Si le silence est détecté, on ne traite pas l'événement
+                    audioBuffers.clear();
                     return true;
                 } else if (!isStarted[0]) {
                     // Si on n'a pas encore commencé, on initialise le traitement
                     isStarted[0] = true;
-                    LOGs.sendLog("son détécté, démarrage de l'écoute...", DefaultLogType.DEBUG);
                 }
-
-                float[] buffer = audioEvent.getFloatBuffer();
-                byte[] bytesBuffer = audioEvent.getByteBuffer().clone();
-                audioBuffers.add(bytesBuffer);
 
                 if (silenceDetector.isSilence(buffer)) {
                     silenceFrames[0]++;
 
                     if (silenceFrames[0] >= maxSilenceDurationFrames) {
                         promptDispatcher.stop();
+                        stopListenAnimation();
                         ByteArrayOutputStream out = new ByteArrayOutputStream();
                         for (byte[] audioBuffer : audioBuffers) {
                             out.write(audioBuffer, 0, audioBuffer.length);
@@ -256,18 +264,47 @@ public class VoiceAssistant extends JFrame {
 
     private String getOpenaiResponse(OpenAIClient client) {
         LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
-        ChatCompletionCreateParams chatParams = ChatCompletionCreateParams.builder()
-                .model(ChatModel.GPT_4_1_NANO)
+        ChatCompletionCreateParams.Builder builder = ChatCompletionCreateParams.builder()
                 .maxCompletionTokens(200)
-                .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. Vous avez un historique des 10 derniers messages envoyés par l'utilisateur et vous. N'utilisez aucun caractère spécial à part des ponctuations de base comme .,?!'.")
+                .addSystemMessage("""
+                        Vous êtes un assistant vocal qui répond aux questions de manière concise et utile.
+                        Vous avez un historique des 10 derniers messages envoyés par l'utilisateur et vous.
+                        Le message va être envoyé à un modèle TTS, donc tenez en compte que le message sera lu par la suite.
+                        N'utilisez aucun caractère spécial à part des ponctuations de base comme .,?!'.
+                        """)
                 .addSystemMessage(textPersonality)
-                .messages(promptHistory)
-                .build();
+                .messages(promptHistory);
 
+        if (Main.enableWebSearch){
+            builder.model(ChatModel.GPT_4O_MINI_SEARCH_PREVIEW)
+                    .addSystemMessage("""
+                            Ne citez pas vos sources.
+                            L'utilisation d'internet ne doit pas rajouter de la longeur à la réponse. Uniquement des informations pertinentes.
+                            """);
 
+        } else {
+            builder.model(ChatModel.GPT_4_1_NANO);
+        }
+
+        ChatCompletionCreateParams chatParams = builder.build();
 
         ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
         String responseText = chatCompletion.choices().get(0).message().content().get();
+
+        if (Main.enableWebSearch){
+            // si la web search est activée, on demande à l'assistant de réécrire le résultat plus lisible pour le TTS
+            ChatCompletionCreateParams rewriteParams = ChatCompletionCreateParams.builder()
+                    .model(ChatModel.GPT_4_1_NANO)
+                    .maxCompletionTokens(200)
+                    .addSystemMessage("""
+                            Réécrivez la réponse de manière concise et lisible pour un TTS.
+                            N'utilisez aucun caractère spécial à part des ponctuations de base comme .,?!'.
+                            """)
+                    .addUserMessage(responseText)
+                    .build();
+            ChatCompletion rewriteCompletion = client.chat().completions().create(rewriteParams);
+            responseText = rewriteCompletion.choices().get(0).message().content().get();
+        }
 
         //enlever les caractères spéciaux et remplacer les cédilles en c normaux
         responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!'çÇàÀâÂäÄéÉèÈêÊëËîÎïÏôÔöÖùÙûÛüÜœŒ\\-+]", " ");
@@ -417,6 +454,31 @@ public class VoiceAssistant extends JFrame {
             }
         });
         timer.start();
+    }
+
+    private void startListenAnimation() {
+        int baseX = 30;
+        int baseY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+        int offsetX = 20;
+
+        listenAnimationTimer = new Timer(30, e -> {
+            angle += angleStep;
+            // sin(angle) oscille entre -1 et +1
+            int x = baseX + (int) (Math.sin(angle) * offsetX);
+            setLocation(x, baseY);
+        });
+        listenAnimationTimer.start();
+
+    }
+
+    private void stopListenAnimation() {
+        if (listenAnimationTimer != null) {
+            listenAnimationTimer.stop();
+        }
+        // remettre à la position de base
+        int baseX = 30;
+        int baseY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
+        slide(getX(), baseX, getY(), baseY, null);
     }
 
 

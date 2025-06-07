@@ -18,6 +18,7 @@ import io.github.cdimascio.dotenv.Dotenv;
 
 import javax.sound.sampled.*;
 import java.awt.*;
+import java.awt.event.ItemEvent;
 import java.io.File;
 import java.util.Scanner;
 
@@ -30,6 +31,8 @@ public class Main {
     public static String openAIKey;
 
     public static boolean assistantInUse = false;
+
+    public static boolean enableWebSearch = false;
 
     public static void main(String[] args) throws AWTException {
         // Créé le tray icon et l'initialise
@@ -151,6 +154,20 @@ public class Main {
     }
 
     private static void addTrayItems(PopupMenu popup) {
+        //Ajout de l'item pour autoriser le web search
+        CheckboxMenuItem webSearchItem = new CheckboxMenuItem("Recherche web");
+        webSearchItem.setState(false);
+        webSearchItem.addItemListener(e -> {
+            if (e.getStateChange() == ItemEvent.SELECTED) {
+                LOGs.sendLog("Recherche web activée", DefaultLogType.DEFAULT);
+                enableWebSearch = true;
+            } else {
+                LOGs.sendLog("Recherche web désactivée", DefaultLogType.DEFAULT);
+                enableWebSearch = false;
+            }
+        });
+        popup.add(webSearchItem);
+
         popup.addSeparator();
 
         // Ajout de l'exit
