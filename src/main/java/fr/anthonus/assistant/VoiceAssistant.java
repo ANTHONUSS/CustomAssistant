@@ -4,20 +4,16 @@ import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.SilenceDetector;
-import be.tarsos.dsp.filters.HighPass;
-import be.tarsos.dsp.io.TarsosDSPAudioFormat;
 import be.tarsos.dsp.io.jvm.AudioDispatcherFactory;
 import be.tarsos.dsp.io.jvm.AudioPlayer;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
-import be.tarsos.dsp.writer.WriterProcessor;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
 import com.openai.models.audio.AudioModel;
 import com.openai.models.audio.transcriptions.Transcription;
 import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
-import com.openai.models.chat.completions.ChatCompletion;
-import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.models.chat.completions.*;
 import fr.anthonus.Main;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
@@ -30,7 +26,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
 
@@ -42,6 +37,9 @@ public class VoiceAssistant extends JFrame {
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
     private String textPersonality;
     private String voicePersonality;
+
+    // pour l'historique des prompts
+    private static final List<ChatCompletionMessageParam> promptHistory = new ArrayList<>();
 
     // pour l'image
     private JLabel imageLabel;
@@ -172,13 +170,34 @@ public class VoiceAssistant extends JFrame {
                 .build();
         String transcriptionText = null;
 
+        ChatCompletionUserMessageParam userMessage;
         if (audioData != null && prompt == null) {
             // transcritpion de l'audio en texte
             transcriptionText = audioToText(client, audioData);
+            // et ajout dans l'historique des prompts
+            userMessage = ChatCompletionUserMessageParam.builder()
+                    .content(transcriptionText)
+                    .build();
+        } else {
+            // si le prompt est déjà en texte, on l'ajoute directement
+            userMessage = ChatCompletionUserMessageParam.builder()
+                    .content(prompt)
+                    .build();
+        }
+        promptHistory.add(ChatCompletionMessageParam.ofUser(userMessage));
+
+        // ne garder que les 10 derniers prompts dans l'historique
+        while (promptHistory.size() > 10) {
+            promptHistory.remove(0);
         }
 
         //envoi de la requête chatGPT
-        String responseText = getOpenaiResponse(client, (audioData != null && prompt == null ? transcriptionText : prompt));
+        String responseText = getOpenaiResponse(client);
+        // ajout de la réponse dans l'historique des prompts
+        ChatCompletionAssistantMessageParam assistantMessage = ChatCompletionAssistantMessageParam.builder()
+                .content(responseText)
+                .build();
+        promptHistory.add(ChatCompletionMessageParam.ofAssistant(assistantMessage));
 
         //génération et lecture de la réponse audio avec animation
         try {
@@ -224,26 +243,28 @@ public class VoiceAssistant extends JFrame {
         return transcriptionText;
     }
 
-    private String getOpenaiResponse(OpenAIClient client, String prompt) {
+    private String getOpenaiResponse(OpenAIClient client) {
         LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
         ChatCompletionCreateParams chatParams = ChatCompletionCreateParams.builder()
                 .model(ChatModel.GPT_4_1_NANO)
-                .maxCompletionTokens(100)
-                .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. N'utilisez AUCUN caractère spécial à part des ponctuations de base comme .,?!'.")
+                .maxCompletionTokens(200)
+                .addSystemMessage("Vous êtes un assistant vocal qui répond aux questions de manière concise et utile. Vous avez un historique des 10 derniers messages envoyés par l'utilisateur et vous. N'utilisez aucun caractère spécial à part des ponctuations de base comme .,?!'.")
                 .addSystemMessage(textPersonality)
-                .addUserMessage(prompt)
+                .messages(promptHistory)
                 .build();
+
+
 
         ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
         String responseText = chatCompletion.choices().get(0).message().content().get();
         LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
 
         //enlever les caractères spéciaux et remplacer les cédilles en c normaux
-        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ");
-        responseText = responseText.replaceAll("ç", "c");
-        responseText = responseText.replaceAll("Ç", "C");
-        responseText = responseText.replaceAll("à", "a");
-        responseText = responseText.replaceAll("À", "A");
+        responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!']", " ")
+                .replace("ç", "c")
+                .replace("Ç", "C")
+                .replace("à", "a")
+                .replace("À", "A");
 
         return responseText;
     }
