@@ -5,20 +5,20 @@ import ai.picovoice.porcupine.PorcupineException;
 import be.tarsos.dsp.AudioDispatcher;
 import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
-import be.tarsos.dsp.filters.HighPass;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
-import be.tarsos.dsp.io.jvm.WaveformWriter;
 import fr.anthonus.assistant.VoiceAssistant;
 import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
+import fr.anthonus.gui.ErrorDialog;
+import fr.anthonus.gui.LoadEnvDialog;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
+import fr.anthonus.utils.SettingsLoader;
 import io.github.cdimascio.dotenv.Dotenv;
 
 import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.io.File;
-import java.util.LinkedList;
 import java.util.Scanner;
 
 public class Main {
@@ -29,13 +29,10 @@ public class Main {
 
     public static String openAIKey;
 
-    public static boolean assistantInUse = false;
-
-    public static boolean enableWebSearch = false;
-
-    public static boolean enableCustomVoice = false;
-
     public static void main(String[] args) throws AWTException {
+        // Charge les paramètres
+        SettingsLoader.loadSettings();
+
         // Créé le tray icon et l'initialise
         PopupMenu popup = new PopupMenu();
         addTrayItems(popup);
@@ -53,7 +50,9 @@ public class Main {
         File keywordFile = new File("data/wakeWordsModels/ok-assistant_fr_windows_v3_0_0.ppn");
         File modelFile = new File("data/wakeWordsModels/porcupine_params_fr.pv");
         if (!keywordFile.exists() || !modelFile.exists()) {
-            throw new RuntimeException("Fichiers de modèle introuvables. Assurez-vous que les fichiers sont présents dans le répertoire 'data/wakeWordsModels'.");
+            LOGs.sendLog("Fichiers de modèle introuvables. Assurez-vous que les fichiers sont présents dans le répertoire 'data/wakeWordsModels'.", DefaultLogType.ERROR);
+
+            System.exit(1);
         }
 
         // écoute du prompt
@@ -74,12 +73,15 @@ public class Main {
             while (true) {
                 String prompt = sc.nextLine();
                 wakeWordDispatcher.stop();
-                Main.assistantInUse = true;
+                VoiceAssistant.assistantInUse = true;
                 new VoiceAssistant(prompt);
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            String errorMessage = "Erreur lors de l'initialisation de l'écoute du mot clé : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
         }
     }
 
@@ -96,7 +98,11 @@ public class Main {
             line.open(format);
             line.start();
         } catch (LineUnavailableException e) {
-            throw new RuntimeException(e);
+            String errorMessage = "Erreur lors de l'ouverture du microphone : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
+            return;
         }
 
         final AudioInputStream stream = new AudioInputStream(line);
@@ -122,20 +128,23 @@ public class Main {
                     int keyWordIndex = Main.porcupine.process(pcm);
 
                     // Si le mot clé est détecté, on lance l'assistant vocal
-                    if (keyWordIndex >= 0 && !Main.assistantInUse) {
+                    if (keyWordIndex >= 0 && !VoiceAssistant.assistantInUse) {
                         wakeWordDispatcher.stop();
-                        Main.assistantInUse = true;
+                        VoiceAssistant.assistantInUse = true;
 
-                        LOGs.sendLog("Mot-clé détecté ! Lancement en mode vocal...", DefaultLogType.DEFAULT);
+                        LOGs.sendLog("Mot-clé détecté ! Lancement en mode vocal...", DefaultLogType.AUDIO);
 
                         new VoiceAssistant(null); // Lancement de l'assistant vocal
 
                     } else if (keyWordIndex >= 0) { // Si l'assistant est déjà en cours d'utilisation
-                        LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé détecté mais ignoré.", DefaultLogType.DEFAULT);
+                        LOGs.sendLog("Assistant déjà en cours d'utilisation, mot-clé détecté mais ignoré.", DefaultLogType.AUDIO);
                     }
 
                 } catch (PorcupineException e) {
-                    throw new RuntimeException(e);
+                    String errorMessage = "Erreur lors du traitement du mot clé : " + e.getMessage();
+                    LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+                    ErrorDialog.showError(null, errorMessage);
+                    System.exit(1);
                 }
 
                 return true;
@@ -150,7 +159,7 @@ public class Main {
 
 
 
-        LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.DEFAULT);
+        LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.AUDIO);
         // Démarre le dispatcher dans un thread séparé
         new Thread(wakeWordDispatcher, "Audio Dispatcher").start();
     }
@@ -158,29 +167,33 @@ public class Main {
     private static void addTrayItems(PopupMenu popup) {
         //Ajout de l'item pour autoriser le web search
         CheckboxMenuItem webSearchItem = new CheckboxMenuItem("Recherche web");
-        webSearchItem.setState(false);
+        webSearchItem.setState(SettingsLoader.enableWebSearch);
         webSearchItem.addItemListener(e -> {
             if (e.getStateChange() == ItemEvent.SELECTED) {
-                LOGs.sendLog("Recherche web activée", DefaultLogType.DEFAULT);
-                enableWebSearch = true;
+                LOGs.sendLog("Recherche web activée", DefaultLogType.LOADING);
+                SettingsLoader.enableWebSearch = true;
             } else {
-                LOGs.sendLog("Recherche web désactivée", DefaultLogType.DEFAULT);
-                enableWebSearch = false;
+                LOGs.sendLog("Recherche web désactivée", DefaultLogType.LOADING);
+                SettingsLoader.enableWebSearch = false;
             }
+            // Sauvegarde les paramètres après modification
+            SettingsLoader.saveSettings();
         });
         popup.add(webSearchItem);
 
         //Ajout de l'item pour autoriser la voix personnalisée
         CheckboxMenuItem customVoiceItem = new CheckboxMenuItem("Voix personnalisée");
-        customVoiceItem.setState(false);
+        customVoiceItem.setState(SettingsLoader.enableCustomVoice);
         customVoiceItem.addItemListener(e -> {
             if (e.getStateChange() == ItemEvent.SELECTED) {
-                LOGs.sendLog("Voix personnalisée activée", DefaultLogType.DEFAULT);
-                enableCustomVoice = true;
+                LOGs.sendLog("Voix personnalisée activée", DefaultLogType.LOADING);
+                SettingsLoader.enableCustomVoice = true;
             } else {
-                LOGs.sendLog("Voix personnalisée désactivée", DefaultLogType.DEFAULT);
-                enableCustomVoice = false;
+                LOGs.sendLog("Voix personnalisée désactivée", DefaultLogType.LOADING);
+                SettingsLoader.enableCustomVoice = false;
             }
+            // Sauvegarde les paramètres après modification
+            SettingsLoader.saveSettings();
         });
         popup.add(customVoiceItem);
 
@@ -201,8 +214,7 @@ public class Main {
         LOGs.sendLog("Chargement du token ChatGPT...", DefaultLogType.LOADING);
         openAIKey = dotenv.get("OPENAI_KEY");
         if (openAIKey == null || openAIKey.isEmpty()) {
-            LOGs.sendLog("Clé API OpenAI non trouvé dans le fichier .env", DefaultLogType.LOADING);
-            return;
+            openAIKey = LoadEnvDialog.showDialog(null, "Chargement du token OpenAI", "OPENAI_KEY");
         } else {
             LOGs.sendLog("Token OpenAI chargé", DefaultLogType.LOADING);
         }
@@ -211,8 +223,7 @@ public class Main {
         LOGs.sendLog("Chargement du token picovoice...", DefaultLogType.LOADING);
         picovoiceAccessKey = dotenv.get("PICOVOICE_ACCESS_KEY");
         if (picovoiceAccessKey == null || picovoiceAccessKey.isEmpty()) {
-            LOGs.sendLog("Clé picovoice non trouvé dans le fichier .env", DefaultLogType.LOADING);
-            return;
+            picovoiceAccessKey = LoadEnvDialog.showDialog(null, "Chargement du token Picovoice", "PICOVOICE_ACCESS_KEY");
         } else {
             LOGs.sendLog("Token picovoice chargé", DefaultLogType.LOADING);
         }

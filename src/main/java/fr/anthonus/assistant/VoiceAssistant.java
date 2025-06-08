@@ -17,8 +17,10 @@ import com.openai.models.audio.transcriptions.TranscriptionCreateParams;
 import com.openai.models.chat.completions.*;
 import fr.anthonus.Main;
 import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
+import fr.anthonus.gui.ErrorDialog;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
+import fr.anthonus.utils.SettingsLoader;
 
 import javax.sound.sampled.*;
 import javax.swing.*;
@@ -33,15 +35,18 @@ import java.util.ArrayList;
 
 public class VoiceAssistant extends JFrame {
 
+    // pour savoir si l'assistant est en cours d'utilisation
+    public static boolean assistantInUse = false;
+
+    // pour l'historique des prompts
+    private static final List<ChatCompletionMessageParam> promptHistory = new ArrayList<>();
+
     private String prompt;
 
     // pour la personnalité de l'assistant
     private final ImageIcon image = new ImageIcon("data/assistantCustomisation/image.png");
     private final String textPersonality;
     private final String voicePersonality;
-
-    // pour l'historique des prompts
-    private static final List<ChatCompletionMessageParam> promptHistory = new ArrayList<>();
 
     private int imageWidth;
     private int imageHeight;
@@ -137,6 +142,10 @@ public class VoiceAssistant extends JFrame {
             line.open(format);
             line.start();
         } catch (LineUnavailableException e) {
+            String errorMessage = "Erreur lors de l'ouverture du microphone : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
             throw new RuntimeException(e);
         }
 
@@ -168,7 +177,7 @@ public class VoiceAssistant extends JFrame {
                     return true;
                 } else if (!isStarted[0]) {
                     // Si on n'a pas encore commencé, on initialise le traitement
-                    LOGs.sendLog("Début de l'écoute du prompt...", DefaultLogType.DEFAULT);
+                    LOGs.sendLog("Début de l'écoute du prompt...", DefaultLogType.AUDIO);
                     isStarted[0] = true;
                 }
 
@@ -244,7 +253,7 @@ public class VoiceAssistant extends JFrame {
             byte[] audioResponse = getOpenaiSpeechBytes(responseText); // get de la réponse en audio
             AudioFormat format = new AudioFormat(24000, 16, 1, true, false);
 
-            if (Main.enableCustomVoice) {
+            if (SettingsLoader.enableCustomVoice) {
                 audioResponse = changeAudioRVC(audioResponse, format);
                 format = new AudioFormat(40000, 16, 1, true, false);
             }
@@ -252,12 +261,15 @@ public class VoiceAssistant extends JFrame {
             playAudioWithAnimation(audioResponse, format);
 
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            String errorMessage = "Erreur lors de la génération ou de la lecture de la réponse audio : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
         } finally {
             int startY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
             int endY = Toolkit.getDefaultToolkit().getScreenSize().height + imageHeight;
             slide(30, 30, startY, endY, () -> {
-                Main.assistantInUse = false;
+                assistantInUse = false;
                 Main.launchDispatcher();
                 dispose();
             });
@@ -265,7 +277,7 @@ public class VoiceAssistant extends JFrame {
     }
 
     private byte[] changeAudioRVC(byte[] audioData, AudioFormat format) throws Exception {
-        LOGs.sendLog("Changement de la voix avec RVC...", DefaultLogType.DEFAULT);
+        LOGs.sendLog("Changement de la voix avec RVC...", DefaultLogType.RVC);
         writeAudioToTempFile(audioData, "RVC/AssistantResponse", format);
         File tempRVCDir = new File("temp/RVC");
 
@@ -297,13 +309,15 @@ public class VoiceAssistant extends JFrame {
 
         try (BufferedReader stdout = new BufferedReader(new InputStreamReader(p.getInputStream()));
              BufferedReader stderr = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
-            stdout.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.DEFAULT));
-            stderr.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.ERROR));
+            stdout.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.RVC));
+            stderr.lines().forEach(line -> LOGs.sendLog(line, DefaultLogType.RVC));
         }
 
         int exitCode = p.waitFor();
         if (exitCode != 0) {
-            LOGs.sendLog("Erreur lors de l'exécution de RVC : code de sortie " + exitCode, DefaultLogType.ERROR);
+            String errorMessage = "Erreur lors de l'exécution de RVC : code de sortie " + exitCode;
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
             return audioData; // retourner l'audio original en cas d'erreur
         }
 
@@ -327,15 +341,17 @@ public class VoiceAssistant extends JFrame {
     private String audioToText(OpenAIClient client, byte[] audioData) {
         File audioFile;
         try {
-            LOGs.sendLog("Traitement de la prompt...", DefaultLogType.DEFAULT);
+            LOGs.sendLog("Traitement de la prompt...", DefaultLogType.API);
             AudioFormat format = new AudioFormat(Main.porcupine.getSampleRate(), 16, 1, true, false);
             audioFile = writeAudioToTempFile(audioData, "userPrompt", format);
         } catch (Exception e) {
-            LOGs.sendLog("Erreur lors de l'écriture du fichier audio temporaire : " + e.getMessage(), DefaultLogType.ERROR);
+            String errorMessage = "Erreur lors de l'écriture du fichier audio temporaire : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
             return null;
         }
 
-        LOGs.sendLog("Envoi de la requête de transcription...", DefaultLogType.DEFAULT);
+        LOGs.sendLog("Envoi de la requête de transcription...", DefaultLogType.API);
         TranscriptionCreateParams transcriptionParams = TranscriptionCreateParams.builder()
                 .file(audioFile.toPath())
                 .model(AudioModel.WHISPER_1)
@@ -343,13 +359,13 @@ public class VoiceAssistant extends JFrame {
 
         Transcription transcription = client.audio().transcriptions().create(transcriptionParams).asTranscription();
         String transcriptionText = transcription.text();
-        LOGs.sendLog("Transcription : " + transcriptionText, DefaultLogType.DEFAULT);
+        LOGs.sendLog("Transcription : " + transcriptionText, DefaultLogType.API);
 
         return transcriptionText;
     }
 
     private String getOpenaiResponse(OpenAIClient client) {
-        LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.DEFAULT);
+        LOGs.sendLog("Envoi de la requête chatGPT...", DefaultLogType.API);
         ChatCompletionCreateParams.Builder builder = ChatCompletionCreateParams.builder()
                 .maxCompletionTokens(200)
                 .addSystemMessage("""
@@ -362,7 +378,7 @@ public class VoiceAssistant extends JFrame {
                 .addSystemMessage(textPersonality)
                 .messages(promptHistory);
 
-        if (Main.enableWebSearch) {
+        if (SettingsLoader.enableWebSearch) {
             builder.model(ChatModel.GPT_4O_MINI_SEARCH_PREVIEW)
                     .addSystemMessage("""
                             Ne citez pas vos sources.
@@ -378,7 +394,7 @@ public class VoiceAssistant extends JFrame {
         ChatCompletion chatCompletion = client.chat().completions().create(chatParams);
         String responseText = chatCompletion.choices().get(0).message().content().get();
 
-        if (Main.enableWebSearch) {
+        if (SettingsLoader.enableWebSearch) {
             // si la web search est activée, on demande à l'assistant de réécrire le résultat plus lisible pour le TTS
             ChatCompletionCreateParams rewriteParams = ChatCompletionCreateParams.builder()
                     .model(ChatModel.GPT_4_1_NANO)
@@ -396,13 +412,13 @@ public class VoiceAssistant extends JFrame {
         //enlever les caractères spéciaux et remplacer les cédilles en c normaux
         responseText = responseText.replaceAll("[^a-zA-Z0-9 .,?!'çÇàÀâÂäÄéÉèÈêÊëËîÎïÏôÔöÖùÙûÛüÜœŒ\\-+]", " ");
 
-        LOGs.sendLog("Message : " + responseText, DefaultLogType.DEFAULT);
+        LOGs.sendLog("Message : " + responseText, DefaultLogType.API);
 
         return responseText;
     }
 
     private void playAudioWithAnimation(byte[] byteArray, AudioFormat format) throws IOException, LineUnavailableException, UnsupportedAudioFileException {
-        LOGs.sendLog("Lecture de l'audio avec animation...", DefaultLogType.DEFAULT);
+        LOGs.sendLog("Lecture de l'audio avec animation...", DefaultLogType.AUDIO);
 
         int baseY = Toolkit.getDefaultToolkit().getScreenSize().height - imageHeight - 70;
 
@@ -471,11 +487,14 @@ public class VoiceAssistant extends JFrame {
         response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
         if (response.statusCode() == 200) {
-            LOGs.sendLog("Réponse audio reçue (taille: " + response.body().length + " bytes)", DefaultLogType.DEFAULT);
+            LOGs.sendLog("Réponse audio reçue (taille: " + response.body().length + " bytes)", DefaultLogType.API);
             return response.body();
         } else {
-            LOGs.sendLog("Erreur lors de la génération de la réponse audio : " + response.statusCode(), DefaultLogType.ERROR);
-            throw new IOException("Erreur API: " + response.statusCode());
+            String errorMessage = "Erreur lors de la génération de la réponse audio : " + response.body().length + " bytes";
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
+            return null;
         }
 
     }
@@ -489,7 +508,9 @@ public class VoiceAssistant extends JFrame {
             }
             return sb.toString().trim();
         } catch (IOException e) {
-            LOGs.sendLog("Erreur lors de la lecture du fichier de description : " + e.getMessage(), DefaultLogType.ERROR);
+            String errorMessage = "Erreur lors de la lecture du fichier " + fileName.getName() + ": " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
             return "";
         }
     }

@@ -4,6 +4,9 @@ import be.tarsos.dsp.AudioEvent;
 import be.tarsos.dsp.AudioProcessor;
 import de.maxhenkel.rnnoise4j.Denoiser;
 import de.maxhenkel.rnnoise4j.UnknownPlatformException;
+import fr.anthonus.gui.ErrorDialog;
+import fr.anthonus.logs.LOGs;
+import fr.anthonus.logs.logTypes.DefaultLogType;
 
 import java.io.IOException;
 import java.util.LinkedList;
@@ -18,6 +21,10 @@ public class RNNoiseProcessor implements AudioProcessor {
         try {
             denoiser = new Denoiser();
         } catch (IOException | UnknownPlatformException e) {
+            String errorMessage = "Erreur lors de l'initialisation du dénoiseur RNNoise : " + e.getMessage();
+            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+            ErrorDialog.showError(null, errorMessage);
+            System.exit(1);
             throw new RuntimeException(e);
         }
     }
