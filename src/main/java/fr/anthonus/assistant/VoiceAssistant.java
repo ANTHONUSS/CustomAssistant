@@ -288,7 +288,7 @@ public class VoiceAssistant extends JFrame {
 
         ProcessBuilder pb = new ProcessBuilder(
                 pythonRuntimePath.getAbsolutePath(), "infer_batch_rvc.py",
-                "6",
+                Integer.toString(SettingsLoader.pitchRVCVoice),
                 tempRVCDir.getAbsolutePath(),
                 rvcModelIndexFile.getAbsolutePath(),
                 "harvest",

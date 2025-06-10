@@ -17,6 +17,7 @@ public class SettingsLoader {
 
     public static File selectedRVCModelFile;
     public static File selectedRVCIndexFile;
+    public static int pitchRVCVoice = 0;
 
     public static void loadSettings() {
         LOGs.sendLog("Chargement des paramètres...", DefaultLogType.LOADING);

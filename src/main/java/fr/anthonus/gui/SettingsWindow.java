@@ -25,6 +25,8 @@ public class SettingsWindow extends JFrame {
     private JButton importRVCModelButton;
     private JButton modifyRVCModelButton;
     private JLabel selectedRVCModelLabel;
+    private JLabel selectRVCPitchLabel;
+    private JSpinner selectRVCPitchSpinner;
 
     private JPanel envPanel;
     private JLabel picovoiceAccessKeyLabel;
@@ -147,6 +149,7 @@ public class SettingsWindow extends JFrame {
         rvcModelsList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         rvcModelsScrollPane = new JScrollPane(rvcModelsList);
         rvcModelsScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        rvcModelsScrollPane.setPreferredSize(new Dimension(200, 150));
         importRVCModelButton = new JButton("Importer un modèle RVC");
         importRVCModelButton.addActionListener(e -> {
             FileDialog fd = new FileDialog(this, "Ajouter un Modèle", FileDialog.LOAD);
@@ -197,6 +200,14 @@ public class SettingsWindow extends JFrame {
         String text = SettingsLoader.selectedRVCModelFile != null ? "Modèle séléctionné : " + SettingsLoader.selectedRVCModelFile.getName().substring(0, SettingsLoader.selectedRVCModelFile.getName().lastIndexOf(".")) : "Aucun modèle sélectionné";
         selectedRVCModelLabel = new JLabel(text);
 
+        selectRVCPitchLabel = new JLabel("Hauteur de la voix :");
+        SpinnerNumberModel model = new SpinnerNumberModel(SettingsLoader.pitchRVCVoice, -12, 12, 1);
+        selectRVCPitchSpinner = new JSpinner(model);
+        selectRVCPitchSpinner.addChangeListener(e -> {
+            SettingsLoader.pitchRVCVoice = (int) selectRVCPitchSpinner.getValue();
+        });
+
+
         // Ajout des composants à la fenêtre
         JPanel panel = new JPanel();
         panel.setLayout(new GridBagLayout());
@@ -217,6 +228,14 @@ public class SettingsWindow extends JFrame {
         panel.add(modifyRVCModelButton, gbc);
         gbc.gridx = 0;
         gbc.gridy = 2;
+        gbc.gridwidth = 1;
+        panel.add(selectRVCPitchLabel, gbc);
+        gbc.gridx = 1;
+        gbc.gridy = 2;
+        gbc.gridwidth = 1;
+        panel.add(selectRVCPitchSpinner, gbc);
+        gbc.gridx = 0;
+        gbc.gridy = 3;
         gbc.gridwidth = 2;
         panel.add(selectedRVCModelLabel, gbc);
 
@@ -303,14 +322,9 @@ public class SettingsWindow extends JFrame {
             String name = rvcModelFile.getName().substring(0, rvcModelFile.getName().lastIndexOf("."));
             rvcModelsListModel.addElement(name);
         }
-    }
 
-    public static void main(String[] args) {
-        SettingsLoader.loadSettings();
-
-        SwingUtilities.invokeLater(() -> {
-            SettingsWindow settingsWindow = new SettingsWindow();
-            settingsWindow.setVisible(true);
-        });
+        SettingsLoader.selectedRVCModelFile = null;
+        SettingsLoader.selectedRVCIndexFile = null;
+        selectedRVCModelLabel.setText("Aucun modèle sélectionné");
     }
 }
