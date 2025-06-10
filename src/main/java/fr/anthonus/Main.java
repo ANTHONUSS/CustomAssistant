@@ -10,6 +10,7 @@ import fr.anthonus.assistant.VoiceAssistant;
 import fr.anthonus.customAudioProcessors.RNNoiseProcessor;
 import fr.anthonus.gui.ErrorDialog;
 import fr.anthonus.gui.LoadEnvDialog;
+import fr.anthonus.gui.SettingsWindow;
 import fr.anthonus.logs.LOGs;
 import fr.anthonus.logs.logTypes.DefaultLogType;
 import fr.anthonus.utils.SettingsLoader;
@@ -158,7 +159,6 @@ public class Main {
         wakeWordDispatcher.addAudioProcessor(wakeWordProcessor);
 
 
-
         LOGs.sendLog("Démarrage de l'écoute...", DefaultLogType.AUDIO);
         // Démarre le dispatcher dans un thread séparé
         new Thread(wakeWordDispatcher, "Audio Dispatcher").start();
@@ -185,17 +185,33 @@ public class Main {
         CheckboxMenuItem customVoiceItem = new CheckboxMenuItem("Voix personnalisée");
         customVoiceItem.setState(SettingsLoader.enableCustomVoice);
         customVoiceItem.addItemListener(e -> {
-            if (e.getStateChange() == ItemEvent.SELECTED) {
-                LOGs.sendLog("Voix personnalisée activée", DefaultLogType.LOADING);
-                SettingsLoader.enableCustomVoice = true;
+            if (SettingsLoader.mangioRVCPath == null) {
+                // show dialog to inform the user to set the path
+                String errorMessage = "Le chemin vers Mangio RVC n'est pas défini. Veuillez le configurer dans les paramètres.";
+                LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+                ErrorDialog.showError(null, errorMessage);
             } else {
-                LOGs.sendLog("Voix personnalisée désactivée", DefaultLogType.LOADING);
-                SettingsLoader.enableCustomVoice = false;
+                if (e.getStateChange() == ItemEvent.SELECTED) {
+                    LOGs.sendLog("Voix personnalisée activée", DefaultLogType.LOADING);
+                    SettingsLoader.enableCustomVoice = true;
+                } else {
+                    LOGs.sendLog("Voix personnalisée désactivée", DefaultLogType.LOADING);
+                    SettingsLoader.enableCustomVoice = false;
+                }
+                // Sauvegarde les paramètres après modification
+                SettingsLoader.saveSettings();
             }
-            // Sauvegarde les paramètres après modification
-            SettingsLoader.saveSettings();
         });
         popup.add(customVoiceItem);
+
+        popup.addSeparator();
+
+        MenuItem settingsItem = new MenuItem("Paramètres");
+        settingsItem.addActionListener(e -> {
+            SettingsWindow settingsWindow = new SettingsWindow();
+            settingsWindow.setVisible(true);
+        });
+        popup.add(settingsItem);
 
         popup.addSeparator();
 

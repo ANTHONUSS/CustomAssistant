@@ -13,6 +13,10 @@ public class SettingsLoader {
 
     public static boolean enableWebSearch;
     public static boolean enableCustomVoice;
+    public static File mangioRVCPath;
+
+    public static File selectedRVCModelFile;
+    public static File selectedRVCIndexFile;
 
     public static void loadSettings() {
         LOGs.sendLog("Chargement des paramètres...", DefaultLogType.LOADING);
@@ -27,6 +31,19 @@ public class SettingsLoader {
                     enableWebSearch = Boolean.parseBoolean(line.split("=")[1]);
                 } else if (line.startsWith("enableCustomVoice=")) {
                     enableCustomVoice = Boolean.parseBoolean(line.split("=")[1]);
+                } else if (line.startsWith("mangioRVCPath=")) {
+                    String path = line.split("=")[1].trim();
+                    if (!path.isEmpty()) {
+                        mangioRVCPath = new File(path);
+                        if (!mangioRVCPath.exists()) {
+                            String errorMessage = "Le chemin Mangio RVC spécifié n'existe pas : " + path;
+                            LOGs.sendLog(errorMessage, DefaultLogType.ERROR);
+                            ErrorDialog.showError(null, errorMessage);
+                            System.exit(1);
+                        }
+                    }
+                } else if (!line.isEmpty() && !line.startsWith("#")) {
+                    LOGs.sendLog("Ligne de paramètre non reconnue : " + line, DefaultLogType.WARNING);
                 }
             }
         } catch (Exception e) {
@@ -43,6 +60,7 @@ public class SettingsLoader {
         StringBuilder content = new StringBuilder();
         content.append("enableWebSearch=").append(enableWebSearch).append("\n");
         content.append("enableCustomVoice=").append(enableCustomVoice).append("\n");
+        content.append("mangioRVCPath=").append(mangioRVCPath.getAbsolutePath()).append("\n");
 
         try {
             Files.write(settingsFile.toPath(), content.toString().getBytes());

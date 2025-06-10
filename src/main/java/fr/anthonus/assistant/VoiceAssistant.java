@@ -281,13 +281,11 @@ public class VoiceAssistant extends JFrame {
         writeAudioToTempFile(audioData, "RVC/AssistantResponse", format);
         File tempRVCDir = new File("temp/RVC");
 
-        //TODO: charger RVC avec des settings personnalisés
-        File mangioRVCPath = new File("D:/Mangio-RVC/Data"); // chemin absolu en attendant les settings
+        File mangioRVCPath = new File("D:/Mangio-RVC/Data");
         File pythonRuntimePath = new File(mangioRVCPath.getAbsolutePath() + "/runtime/python.exe");
-        File rvcModelFile = new File("data/assistantCustomisation/rvcModels/model.pth");
+        File rvcModelFile = SettingsLoader.selectedRVCModelFile;
         File rvcModelIndexFile = new File("data/assistantCustomisation/rvcModels/model.index");
 
-        //TODO: lancer la comande python
         ProcessBuilder pb = new ProcessBuilder(
                 pythonRuntimePath.getAbsolutePath(), "infer_batch_rvc.py",
                 "6",
@@ -321,7 +319,6 @@ public class VoiceAssistant extends JFrame {
             return audioData; // retourner l'audio original en cas d'erreur
         }
 
-        //TODO: reconvertir le fichier sortie en byte[]
         File outputFile = new File("temp/RVCOutput/AssistantResponse.wav");
 
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
