@@ -208,8 +208,11 @@ public class Main {
 
         MenuItem settingsItem = new MenuItem("Paramètres");
         settingsItem.addActionListener(e -> {
-            SettingsWindow settingsWindow = new SettingsWindow();
-            settingsWindow.setVisible(true);
+            if (!SettingsWindow.isOpen) {
+                SettingsWindow settingsWindow = new SettingsWindow();
+                settingsWindow.setVisible(true);
+                SettingsWindow.isOpen = true;
+            }
         });
         popup.add(settingsItem);
 

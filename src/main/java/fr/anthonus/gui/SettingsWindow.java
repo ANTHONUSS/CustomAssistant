@@ -5,12 +5,15 @@ import fr.anthonus.utils.SettingsLoader;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
 public class SettingsWindow extends JFrame {
+    public static boolean isOpen = false;
+
     private JPanel assistantCustomisationPanel;
     private JCheckBox webSearchCheckBox;
     private JCheckBox customVoiceCheckBox;
@@ -38,7 +41,14 @@ public class SettingsWindow extends JFrame {
     public SettingsWindow() {
         setTitle("Paramètres de l'assistant");
         setSize(500, 400);
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                isOpen = false;
+                dispose();
+            }
+        });
         setLocationRelativeTo(null);
         setResizable(false);
 
@@ -325,6 +335,7 @@ public class SettingsWindow extends JFrame {
 
         SettingsLoader.selectedRVCModelFile = null;
         SettingsLoader.selectedRVCIndexFile = null;
+
         selectedRVCModelLabel.setText("Aucun modèle sélectionné");
     }
 }
