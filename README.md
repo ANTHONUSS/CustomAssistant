@@ -21,7 +21,7 @@
 À ce stade, deux choix s'offrent à vous :
 
 - Exécuter le jar avec la commande suivante :
-- 
+
 ```bash
 java -jar customAssistant.jar
 ```
