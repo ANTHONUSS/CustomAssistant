@@ -20,6 +20,7 @@ import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.ItemEvent;
 import java.io.File;
+import java.util.NoSuchElementException;
 import java.util.Scanner;
 
 public class Main {
@@ -69,14 +70,20 @@ public class Main {
             // Lance l'écoute du mot clé
             launchDispatcher();
 
-            // Lance aussi l'écoute du prompt en texte
-            Scanner sc = new Scanner(System.in);
-            while (true) {
-                String prompt = sc.nextLine();
-                wakeWordDispatcher.stop();
-                VoiceAssistant.assistantInUse = true;
-                new VoiceAssistant(prompt);
+
+            // Lance aussi l'écoute du prompt en texte (seulement si console disponible)
+            try {
+                Scanner sc = new Scanner(System.in);
+                while (true) {
+                    String prompt = sc.nextLine();
+                    wakeWordDispatcher.stop();
+                    VoiceAssistant.assistantInUse = true;
+                    new VoiceAssistant(prompt);
+                }
+            } catch (NoSuchElementException e) {
+                // Si une erreur ici, c'est qu'on l'a lancé en javaw, donc on ne fait rien
             }
+
 
         } catch (Exception e) {
             String errorMessage = "Erreur lors de l'initialisation de l'écoute du mot clé : " + e.getMessage();
